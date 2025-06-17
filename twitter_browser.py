@@ -258,74 +258,83 @@ class TwitterBrowser:
                     if verification_input:
                         self.logger.info(f"🔍 Found verification input: {selector}")
                         break
+            except:
+                continue
+        
+        if not verification_input:
+            self.logger.info("ℹ️ No verification required")
+            return True
+        
+        # Placeholder veya label'dan ne istendiğini anlamaya çalış
+        try:
+            placeholder = await verification_input.get_attribute("placeholder") or ""
+            aria_label = await verification_input.get_attribute("aria-label") or ""
+            
+            self.logger.info(f"🔍 Verification field placeholder: '{placeholder}'")
+            self.logger.info(f"🔍 Verification field aria-label: '{aria_label}'")
+            
+            # Username/email/phone istiyor mu kontrol et
+            verification_text = (placeholder + aria_label).lower()
+            
+            # Twitter username'i gir (çoğu durumda bu işe yarar)
+            username = os.environ.get('TWITTER_USERNAME')
+            if not username:
+                self.logger.error("❌ TWITTER_USERNAME not found in environment variables")
+                return False
+            
+            await self.page.click(verification_input)
+            await asyncio.sleep(1)
+            await self.page.fill(verification_input, username)
+            await asyncio.sleep(random.uniform(1, 2))
+            self.logger.info(f"👤 Entered username: {username}")
+            
+            # Next/Submit butonuna tıkla
+            submit_selectors = [
+                'xpath=//span[text()="Next"]',
+                'xpath=//span[text()="Submit"]',
+                'xpath=//span[text()="Verify"]',
+                'xpath=//div[@role="button" and contains(., "Next")]',
+                '[data-testid="ocfEnterTextNextButton"]'
+            ]
+            
+            for selector in submit_selectors:
+                try:
+                    await self.page.click(selector)
+                    self.logger.info("✅ Verification submitted")
+                    await asyncio.sleep(random.uniform(3, 5))
+                    return True
                 except:
                     continue
             
-            if not verification_input:
-                self.logger.info("ℹ️ No verification required")
-                return True
+            self.logger.warning("⚠️ Could not find submit button")
+            return True
             
-            # Placeholder veya label'dan ne istendiğini anlamaya çalış
+        except Exception as e:
+            self.logger.error(f"❌ Error handling verification input: {e}")
+            # Hata olsa bile username girmeyi dene
             try:
-                placeholder = await verification_input.get_attribute("placeholder") or ""
-                aria_label = await verification_input.get_attribute("aria-label") or ""
-                
-                self.logger.info(f"🔍 Verification field placeholder: '{placeholder}'")
-                self.logger.info(f"🔍 Verification field aria-label: '{aria_label}'")
-                
-                # Username istiyor mu?
-                if any(keyword in (placeholder + aria_label).lower() for keyword in ['username', 'phone', 'email']):
-                    username = os.environ.get('TWITTER_USERNAME')
-                    if username:
-                        await self.page.click(verification_input)
-                        await asyncio.sleep(1)
-                        await self.page.fill(verification_input, username)
-                        await asyncio.sleep(random.uniform(1, 2))
-                        self.logger.info(f"👤 Entered username: {username}")
-                    else:
-                        self.logger.error("❌ TWITTER_USERNAME not found in environment variables")
-                        return False
-                else:
-                    # Bilinmeyen doğrulama türü, username dene
-                    username = os.environ.get('TWITTER_USERNAME')
-                    if username:
-                        await self.page.click(verification_input)
-                        await asyncio.sleep(1)
-                        await self.page.fill(verification_input, username)
-                        await asyncio.sleep(random.uniform(1, 2))
-                        self.logger.info(f"👤 Tried username: {username}")
-                    else:
-                        self.logger.error("❌ TWITTER_USERNAME not found")
-                        return False
-                
-                # Next/Submit butonuna tıkla
-                submit_selectors = [
-                    'xpath=//span[text()="Next"]',
-                    'xpath=//span[text()="Submit"]',
-                    'xpath=//span[text()="Verify"]',
-                    'xpath=//div[@role="button" and contains(., "Next")]',
-                    '[data-testid="ocfEnterTextNextButton"]'
-                ]
-                
-                for selector in submit_selectors:
+                username = os.environ.get('TWITTER_USERNAME')
+                if username:
+                    await self.page.click(verification_input)
+                    await asyncio.sleep(1)
+                    await self.page.fill(verification_input, username)
+                    await asyncio.sleep(2)
+                    
+                    # Next butonunu bul ve tıkla
                     try:
-                        await self.page.click(selector)
-                        self.logger.info("✅ Verification submitted")
-                        await asyncio.sleep(random.uniform(3, 5))
+                        await self.page.click('xpath=//span[text()="Next"]')
+                        await asyncio.sleep(3)
+                        self.logger.info("✅ Username entered despite error")
                         return True
                     except:
-                        continue
-                
-                self.logger.warning("⚠️ Could not find submit button")
-                return True
-                
-            except Exception as e:
-                self.logger.error(f"❌ Error handling verification input: {e}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"❌ Error in verification handler: {e}")
+                        pass
+            except:
+                pass
             return False
+            
+    except Exception as e:
+        self.logger.error(f"❌ Error in verification handler: {e}")
+        return False
     
     async def login(self):
         """Twitter'a giriş yap - BASİTLEŞTİRİLMİŞ"""
