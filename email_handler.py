@@ -9,7 +9,7 @@ from typing import Optional
 class EmailHandler:
     def __init__(self):
         self.email_user = "hasanacikgoz91@gmail.com"
-        self.email_pass = None
+        self.email_pass = "Nuray1965+"  # Direkt şifre
         self.imap_server = "imap.gmail.com"
         self.imap_port = 993
         self.logger = logging.getLogger('EmailHandler')
@@ -26,15 +26,14 @@ class EmailHandler:
     def get_twitter_verification_code(self, timeout=90) -> Optional[str]:
         """Twitter'dan gelen doğrulama kodunu email'den al"""
         try:
-            # Gmail App Password'u al
-            self.email_pass = os.environ.get('GMAIL_APP_PASSWORD')
+            # Önce environment variable'dan al, yoksa direkt şifreyi kullan
+            self.email_pass = os.environ.get('GMAIL_APP_PASSWORD') or "Nuray1965+"
             
             if not self.email_pass:
-                self.logger.error("❌ GMAIL_APP_PASSWORD environment variable not found!")
-                self.logger.info("ℹ️ Please set GMAIL_APP_PASSWORD in your environment variables")
+                self.logger.error("❌ No email password available!")
                 return None
-            
-            self.logger.info("📧 Connecting to Gmail to get verification code...")
+        
+            self.logger.info("📧 Connecting to Gmail with direct password...")
             
             start_time = time.time()
             
