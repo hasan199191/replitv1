@@ -151,6 +151,10 @@ class TwitterBrowser:
             self.logger.warning(f"⚠️ Quick check failed: {e}")
             return False
     
+    async def check_login_status(self):
+        """Login durumunu kontrol et - quick_login_check'in alias'ı"""
+        return await self.quick_login_check()
+    
     async def direct_login(self):
         """DİREKT ve HIZLI login süreci"""
         try:
