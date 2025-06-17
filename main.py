@@ -7,7 +7,7 @@ import signal
 import sys
 from datetime import datetime, timedelta
 import random
-from twitter_browser import TwitterBrowser
+from twitter_browser_playwright import TwitterBrowserPlaywright
 from advanced_content_generator import AdvancedContentGenerator
 from health_server import start_health_server
 
@@ -32,7 +32,7 @@ class TwitterBot:
     async def initialize(self):
         """Bot'u başlat ve Twitter'a giriş yap"""
         try:
-            logging.info("🤖 Initializing Twitter Bot...")
+            logging.info("🤖 Initializing Twitter Bot with Playwright + Chromium...")
             
             # Health server'ı başlat (Render için gerekli)
             if os.environ.get('IS_RENDER'):
@@ -43,18 +43,18 @@ class TwitterBot:
             await self.content_generator.initialize()
             logging.info("🧠 Content generator initialized")
             
-            # Twitter tarayıcısını başlat
-            self.twitter_browser = TwitterBrowser()
-            if not self.twitter_browser.initialize():
+            # Twitter tarayıcısını başlat (Playwright)
+            self.twitter_browser = TwitterBrowserPlaywright()
+            if not await self.twitter_browser.initialize():
                 raise Exception("Twitter browser could not be initialized")
             
             # Twitter'a giriş yap - BU SADECE BİR KEZ YAPILACAK
-            if not self.twitter_browser.login():
+            if not await self.twitter_browser.login():
                 raise Exception("Could not login to Twitter")
             
             self.bot_initialized = True
-            logging.info("🎉 Bot successfully initialized and logged in!")
-            logging.info("📱 Session will persist - no need to login again!")
+            logging.info("🎉 Bot successfully initialized with Playwright!")
+            logging.info("📱 Persistent session active - no repeated logins needed!")
             
             return True
             
@@ -97,7 +97,7 @@ class TwitterBot:
                     
                     if content:
                         # Tweet gönder
-                        success = self.twitter_browser.post_tweet(content)
+                        success = await self.twitter_browser.post_tweet(content)
                         if success:
                             logging.info(f"✅ Posted content for {project['name']}")
                             logging.info(f"📝 Content: {content[:100]}...")
@@ -130,10 +130,10 @@ class TwitterBot:
             for i, username in enumerate(selected_accounts):
                 try:
                     # Kullanıcıyı takip et
-                    self.twitter_browser.follow_user(username)
+                    await self.twitter_browser.follow_user(username)
                     
                     # Son tweet'i al
-                    tweet_data = self.twitter_browser.get_latest_tweet(username)
+                    tweet_data = await self.twitter_browser.get_latest_tweet(username)
                     
                     if tweet_data and tweet_data.get('url'):
                         # Tweet zamanını kontrol et (son 2 saat içinde mi?)
@@ -147,7 +147,7 @@ class TwitterBot:
                                 
                                 if reply_content:
                                     # Yanıt gönder
-                                    success = self.twitter_browser.reply_to_tweet(
+                                    success = await self.twitter_browser.reply_to_tweet(
                                         tweet_data['url'], 
                                         reply_content
                                     )
@@ -192,7 +192,7 @@ class TwitterBot:
         logging.info(f"🛑 Received signal {signum}, shutting down gracefully...")
         self.is_running = False
         if self.twitter_browser:
-            self.twitter_browser.close()
+            asyncio.create_task(self.twitter_browser.close())
         sys.exit(0)
     
     async def run(self):
@@ -209,9 +209,9 @@ class TwitterBot:
         self.is_running = True
         self.schedule_tasks()
         
-        logging.info("🤖 Twitter Bot is now running!")
+        logging.info("🤖 Twitter Bot is now running with Playwright + Chromium!")
         logging.info("⏰ Will execute workflow every hour at :00")
-        logging.info("📱 Session is persistent - no repeated logins needed")
+        logging.info("📱 Persistent session active - much more reliable!")
         
         # İlk workflow'u hemen çalıştır
         logging.info("🚀 Running initial workflow...")
@@ -227,9 +227,9 @@ class TwitterBot:
                 current_time = datetime.now()
                 if current_time.minute == 0 and current_time.hour % 6 == 0:
                     logging.info("🔍 Checking session health...")
-                    if not self.twitter_browser.check_login_status():
+                    if not await self.twitter_browser.check_login_status():
                         logging.warning("⚠️ Session lost, attempting to restore...")
-                        if not self.twitter_browser.login():
+                        if not await self.twitter_browser.login():
                             logging.error("❌ Could not restore session")
                         else:
                             logging.info("✅ Session restored")
@@ -249,7 +249,7 @@ async def main():
     finally:
         # Temiz kapatma
         if bot.twitter_browser:
-            bot.twitter_browser.close()
+            await bot.twitter_browser.close()
         logging.info("👋 Bot shutdown complete")
 
 if __name__ == "__main__":
