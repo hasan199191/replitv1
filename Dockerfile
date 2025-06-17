@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Render.com için gerekli sistem paketleri
+# Sistem paketleri
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -27,24 +27,42 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Belirli bir Chrome sürümünü yükle
-RUN wget -q -O chrome.deb https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_119.0.6045.159-1_amd64.deb \
+# Google Chrome kurulumu - Stable version
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
     && apt-get update \
-    && apt-get install -y ./chrome.deb \
-    && rm chrome.deb \
+    && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# Uygun ChromeDriver sürümünü yükle
-RUN wget -q "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/119.0.6045.159/linux64/chromedriver-linux64.zip" \
-    && unzip chromedriver-linux64.zip \
-    && mv chromedriver-linux64/chromedriver /usr/bin/chromedriver \
-    && chmod +x /usr/bin/chromedriver \
-    && rm -rf chromedriver-linux64.zip chromedriver-linux64
+# Chrome versiyonunu kontrol et ve uyumlu ChromeDriver indir
+RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d. -f1-3) \
+    && echo "Installed Chrome version: $CHROME_VERSION" \
+    && CHROME_MAJOR_VERSION=$(echo $CHROME_VERSION | cut -d. -f1) \
+    && echo "Chrome major version: $CHROME_MAJOR_VERSION" \
+    && if [ "$CHROME_MAJOR_VERSION" -ge "115" ]; then \
+        echo "Using Chrome for Testing API for version $CHROME_VERSION" \
+        && CHROMEDRIVER_VERSION=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_$CHROME_MAJOR_VERSION") \
+        && echo "ChromeDriver version to download: $CHROMEDRIVER_VERSION" \
+        && wget -q "https://storage.googleapis.com/chrome-for-testing-public/$CHROMEDRIVER_VERSION/linux64/chromedriver-linux64.zip" \
+        && unzip chromedriver-linux64.zip \
+        && mv chromedriver-linux64/chromedriver /usr/bin/chromedriver \
+        && chmod +x /usr/bin/chromedriver \
+        && rm -rf chromedriver-linux64.zip chromedriver-linux64; \
+    else \
+        echo "Using legacy ChromeDriver API" \
+        && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_$CHROME_VERSION") \
+        && echo "ChromeDriver version: $CHROMEDRIVER_VERSION" \
+        && wget -q "https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip" \
+        && unzip chromedriver_linux64.zip -d /usr/bin \
+        && chmod +x /usr/bin/chromedriver \
+        && rm chromedriver_linux64.zip; \
+    fi \
+    && echo "ChromeDriver installation completed" \
+    && chromedriver --version
 
-# Çalışma dizini
 WORKDIR /app
 
-# Python bağımlılıklarını kopyala ve yükle
+# Python bağımlılıklarını yükle
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
@@ -52,23 +70,18 @@ RUN pip install --no-cache-dir --upgrade pip \
 # Uygulama dosyalarını kopyala
 COPY . .
 
-# Data ve logs klasörlerini oluştur
+# Gerekli klasörleri oluştur
 RUN mkdir -p data logs
 
-# Render.com için çevre değişkenleri
+# Çevre değişkenleri
 ENV IS_RENDER=true
 ENV PYTHONUNBUFFERED=1
 ENV DISPLAY=:99
 
-# Port (Render için gerekli olabilir)
 EXPOSE 10000
-
-# Health check endpoint için basit HTTP server
-COPY health_server.py .
 
 # Startup script
 COPY start.sh .
 RUN chmod +x start.sh
 
-# Uygulamayı çalıştır
 CMD ["./start.sh"]
