@@ -1,27 +1,21 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+import asyncio
 import time
 import os
-import pickle
 import json
 import logging
 import random
-import subprocess
+from datetime import datetime, timedelta
+from typing import Optional, Dict
 
 class TwitterBrowser:
     def __init__(self):
-        self.driver = None
-        self.cookies_file = 'data/twitter_cookies.pkl'
-        self.session_file = 'data/twitter_session.json'
-        self.user_data_dir = '/tmp/chrome_profile'  # Render için /tmp kullan
+        self.playwright = None
+        self.browser: Optional[BrowserContext] = None  # launch_persistent_context BrowserContext döndürür
+        self.page: Optional[Page] = None
+        self.user_data_dir = '/tmp/playwright_data'
         self.is_logged_in = False
-        self.login_verified = False
+        self.session_file = 'data/twitter_session.json'
         self.setup_logging()
         
     def setup_logging(self):
@@ -34,220 +28,200 @@ class TwitterBrowser:
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
     
-    def initialize(self):
-        """Tarayıcıyı başlat - Persistent session ile"""
+    async def initialize(self):
+        """Playwright + Chromium'u başlat"""
         try:
+            self.logger.info("🚀 Initializing Playwright + Chromium...")
+            
             # Data klasörlerini oluştur
             os.makedirs('data', exist_ok=True)
             os.makedirs(self.user_data_dir, exist_ok=True)
             
-            chrome_options = Options()
+            # Playwright'i başlat
+            self.playwright = await async_playwright().start()
             
-            # Render için headless mode
-            if os.environ.get('IS_RENDER'):
-                chrome_options.add_argument("--headless")
-                chrome_options.binary_location = "/usr/bin/google-chrome"
-            
-            # Temel Chrome ayarları
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--window-size=1920,1080")
-            chrome_options.add_argument("--disable-notifications")
-            chrome_options.add_argument("--disable-popup-blocking")
-            chrome_options.add_argument("--disable-extensions")
-            chrome_options.add_argument("--disable-infobars")
-            chrome_options.add_argument("--mute-audio")
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
-            
-            # PERSISTENT SESSION - Chrome profil klasörünü kullan
-            chrome_options.add_argument(f"--user-data-dir={self.user_data_dir}")
-            chrome_options.add_argument("--profile-directory=TwitterBot")
-            
-            # Anti-detection
-            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            chrome_options.add_experimental_option('useAutomationExtension', False)
-            
-            # ChromeDriver service oluştur
-            if os.path.exists('/usr/bin/chromedriver'):
-                service = Service('/usr/bin/chromedriver')
-            else:
-                service = Service(ChromeDriverManager().install())
-            
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Browser'ı persistent context ile başlat
+            self.browser = await self.playwright.chromium.launch_persistent_context(
+                user_data_dir=self.user_data_dir,
+                headless=True,
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-extensions',
+                    '--disable-plugins',
+                    '--disable-default-apps',
+                    '--no-first-run',
+                    '--no-default-browser-check',
+                    '--disable-blink-features=AutomationControlled'
+                ],
+                extra_http_headers={
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
+            )
             
             # Anti-detection script
-            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            
-            self.logger.info("✅ Browser initialized with persistent session")
-            return True
+            await self.browser.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                });
                 
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                });
+                
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en'],
+                });
+                
+                window.chrome = {
+                    runtime: {},
+                };
+            """)
+            
+            # Yeni sayfa oluştur
+            self.page = await self.browser.new_page()
+            
+            self.logger.info("✅ Playwright + Chromium initialized with persistent context!")
+            return True
+            
         except Exception as e:
-            self.logger.error(f"❌ Error initializing browser: {e}")
+            self.logger.error(f"❌ Error initializing Playwright: {e}")
             return False
     
-    def check_login_status(self):
-        """Mevcut oturum durumunu kontrol et"""
+    async def check_login_status(self):
+        """Login durumunu kontrol et"""
         try:
-            self.logger.info("🔍 Checking current login status...")
+            self.logger.info("🔍 Checking login status...")
             
             # Ana sayfaya git
-            self.driver.get("https://twitter.com/home")
-            time.sleep(8)
+            await self.page.goto("https://twitter.com/home", wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(3)
             
-            # Login durumunu kontrol et - birden fazla yöntem
+            # Login indicator'ları kontrol et
             login_indicators = [
-                # Tweet compose button
-                "a[data-testid='SideNav_NewTweet_Button']",
-                # Home timeline
-                "[data-testid='primaryColumn']",
-                # Profile menu
-                "[data-testid='SideNav_AccountSwitcher_Button']",
-                # Home tab
-                "a[data-testid='AppTabBar_Home_Link']"
+                'a[data-testid="SideNav_NewTweet_Button"]',
+                '[data-testid="primaryColumn"]',
+                'a[data-testid="AppTabBar_Home_Link"]',
+                '[data-testid="SideNav_AccountSwitcher_Button"]'
             ]
             
             for indicator in login_indicators:
                 try:
-                    element = WebDriverWait(self.driver, 5).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, indicator))
-                    )
+                    element = await self.page.wait_for_selector(indicator, timeout=5000)
                     if element:
                         self.logger.info(f"✅ Login confirmed! Found: {indicator}")
                         self.is_logged_in = True
-                        self.login_verified = True
-                        self.save_session_info()
+                        await self.save_session_info()
                         return True
-                except TimeoutException:
+                except:
                     continue
             
             # URL kontrolü
-            current_url = self.driver.current_url
+            current_url = self.page.url
             if "/home" in current_url and "login" not in current_url:
                 self.logger.info("✅ Login confirmed by URL check")
                 self.is_logged_in = True
-                self.login_verified = True
-                self.save_session_info()
+                await self.save_session_info()
                 return True
             
             self.logger.info("❌ Not logged in - authentication required")
             return False
-                
+            
         except Exception as e:
             self.logger.error(f"❌ Error checking login status: {e}")
             return False
     
-    def login(self):
+    async def login(self):
         """Twitter'a giriş yap"""
-        if not self.driver:
-            if not self.initialize():
+        if not self.page:
+            if not await self.initialize():
                 return False
         
         # Önce mevcut session'ı kontrol et
-        if self.check_login_status():
+        if await self.check_login_status():
             return True
         
         try:
             self.logger.info("🚀 Starting Twitter login process...")
             
             # Login sayfasına git
-            self.driver.get("https://twitter.com/i/flow/login")
-            time.sleep(5)
+            await self.page.goto("https://twitter.com/i/flow/login", wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(3)
             
-            # Email alanını bul
-            email_field = WebDriverWait(self.driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[autocomplete='username']"))
-            )
-            
-            # Email gir
-            email_field.clear()
-            email_field.send_keys(os.environ.get('EMAIL_USER'))
+            # Email alanını bul ve doldur
+            email_selector = 'input[autocomplete="username"]'
+            await self.page.wait_for_selector(email_selector, timeout=15000)
+            await self.page.fill(email_selector, os.environ.get('EMAIL_USER'))
             self.logger.info("📧 Email entered")
-            time.sleep(2)
+            await asyncio.sleep(1)
             
             # Next butonuna tıkla
-            next_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//span[text()='Next']"))
-            )
-            next_button.click()
-            time.sleep(3)
+            next_button = 'xpath=//span[text()="Next"]'
+            await self.page.click(next_button)
+            await asyncio.sleep(3)
             
             # Username verification kontrol et
             try:
-                username_field = WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[data-testid='ocfEnterTextTextInput']"))
-                )
-                username_field.clear()
-                username_field.send_keys(os.environ.get('TWITTER_USERNAME'))
-                self.logger.info("👤 Username verification completed")
-                
-                next_button = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.XPATH, "//span[text()='Next']"))
-                )
-                next_button.click()
-                time.sleep(3)
-            except TimeoutException:
+                username_field = await self.page.wait_for_selector('input[data-testid="ocfEnterTextTextInput"]', timeout=5000)
+                if username_field:
+                    await self.page.fill('input[data-testid="ocfEnterTextTextInput"]', os.environ.get('TWITTER_USERNAME'))
+                    self.logger.info("👤 Username verification completed")
+                    await self.page.click('xpath=//span[text()="Next"]')
+                    await asyncio.sleep(3)
+            except:
                 self.logger.info("⏭️ Username verification skipped")
             
-            # Password alanını bul
-            password_field = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='password']"))
-            )
-            
-            # Password gir
-            password_field.clear()
-            password_field.send_keys(os.environ.get('TWITTER_PASSWORD'))
+            # Password alanını bul ve doldur
+            password_selector = 'input[name="password"]'
+            await self.page.wait_for_selector(password_selector, timeout=10000)
+            await self.page.fill(password_selector, os.environ.get('TWITTER_PASSWORD'))
             self.logger.info("🔐 Password entered")
-            time.sleep(2)
+            await asyncio.sleep(1)
             
             # Login butonuna tıkla
-            login_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//span[text()='Log in']"))
-            )
-            login_button.click()
+            login_button = 'xpath=//span[text()="Log in"]'
+            await self.page.click(login_button)
             self.logger.info("🔑 Login button clicked")
-            time.sleep(8)
+            await asyncio.sleep(8)
             
             # Login başarılı mı kontrol et
-            if self.check_login_status():
+            if await self.check_login_status():
                 self.logger.info("🎉 LOGIN SUCCESSFUL!")
-                self.save_cookies()
                 return True
             else:
                 # Bir kez daha dene
-                time.sleep(10)
-                if self.check_login_status():
+                await asyncio.sleep(5)
+                if await self.check_login_status():
                     self.logger.info("🎉 LOGIN SUCCESSFUL (second attempt)!")
-                    self.save_cookies()
                     return True
                 else:
                     self.logger.error("❌ LOGIN FAILED")
+                    self.logger.info(f"Current URL: {self.page.url}")
                     return False
                 
         except Exception as e:
             self.logger.error(f"❌ Login error: {e}")
             return False
     
-    def save_cookies(self):
-        """Çerezleri kaydet"""
-        try:
-            cookies = self.driver.get_cookies()
-            with open(self.cookies_file, 'wb') as f:
-                pickle.dump(cookies, f)
-            self.logger.info("🍪 Cookies saved")
-            return True
-        except Exception as e:
-            self.logger.error(f"❌ Error saving cookies: {e}")
-            return False
-    
-    def save_session_info(self):
+    async def save_session_info(self):
         """Session bilgilerini kaydet"""
         try:
             session_info = {
                 'login_time': time.time(),
-                'current_url': self.driver.current_url,
-                'page_title': self.driver.title,
+                'current_url': self.page.url,
+                'page_title': await self.page.title(),
                 'session_active': True,
                 'login_verified': True
             }
@@ -261,42 +235,35 @@ class TwitterBrowser:
             self.logger.error(f"❌ Error saving session: {e}")
             return False
     
-    def post_tweet(self, content):
+    async def post_tweet(self, content):
         """Tweet gönder"""
         if not self.is_logged_in:
-            if not self.login():
+            if not await self.login():
                 return False
         
         try:
             self.logger.info("📝 Posting tweet...")
             
             # Ana sayfaya git
-            self.driver.get("https://twitter.com/home")
-            time.sleep(5)
+            await self.page.goto("https://twitter.com/home", wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(3)
             
-            # Tweet butonunu bul
-            tweet_button = WebDriverWait(self.driver, 15).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "a[data-testid='SideNav_NewTweet_Button']"))
-            )
-            tweet_button.click()
-            time.sleep(3)
+            # Tweet butonunu bul ve tıkla
+            tweet_button = 'a[data-testid="SideNav_NewTweet_Button"]'
+            await self.page.wait_for_selector(tweet_button, timeout=15000)
+            await self.page.click(tweet_button)
+            await asyncio.sleep(2)
             
-            # Tweet alanını bul
-            tweet_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-testid='tweetTextarea_0']"))
-            )
+            # Tweet alanını bul ve içeriği yaz
+            tweet_input = 'div[data-testid="tweetTextarea_0"]'
+            await self.page.wait_for_selector(tweet_input, timeout=10000)
+            await self.page.fill(tweet_input, content)
+            await asyncio.sleep(1)
             
-            # İçeriği yaz
-            tweet_input.clear()
-            tweet_input.send_keys(content)
-            time.sleep(2)
-            
-            # Tweet gönder
-            post_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='tweetButton']"))
-            )
-            post_button.click()
-            time.sleep(5)
+            # Tweet gönder butonuna tıkla
+            post_button = 'div[data-testid="tweetButton"]'
+            await self.page.click(post_button)
+            await asyncio.sleep(3)
             
             self.logger.info("✅ Tweet posted successfully!")
             return True
@@ -305,42 +272,35 @@ class TwitterBrowser:
             self.logger.error(f"❌ Error posting tweet: {e}")
             return False
     
-    def reply_to_tweet(self, tweet_url, reply_content):
+    async def reply_to_tweet(self, tweet_url, reply_content):
         """Tweet'e yanıt ver"""
         if not self.is_logged_in:
-            if not self.login():
+            if not await self.login():
                 return False
         
         try:
             self.logger.info(f"💬 Replying to tweet: {tweet_url}")
             
             # Tweet sayfasına git
-            self.driver.get(tweet_url)
-            time.sleep(5)
+            await self.page.goto(tweet_url, wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(3)
             
-            # Reply butonunu bul
-            reply_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='reply']"))
-            )
-            reply_button.click()
-            time.sleep(3)
+            # Reply butonunu bul ve tıkla
+            reply_button = 'div[data-testid="reply"]'
+            await self.page.wait_for_selector(reply_button, timeout=10000)
+            await self.page.click(reply_button)
+            await asyncio.sleep(2)
             
-            # Reply alanını bul
-            reply_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-testid='tweetTextarea_0']"))
-            )
+            # Reply alanını bul ve içeriği yaz
+            reply_input = 'div[data-testid="tweetTextarea_0"]'
+            await self.page.wait_for_selector(reply_input, timeout=10000)
+            await self.page.fill(reply_input, reply_content)
+            await asyncio.sleep(1)
             
-            # Reply içeriğini yaz
-            reply_input.clear()
-            reply_input.send_keys(reply_content)
-            time.sleep(2)
-            
-            # Reply gönder
-            reply_post_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='tweetButton']"))
-            )
-            reply_post_button.click()
-            time.sleep(5)
+            # Reply gönder butonuna tıkla
+            reply_post_button = 'div[data-testid="tweetButton"]'
+            await self.page.click(reply_post_button)
+            await asyncio.sleep(3)
             
             self.logger.info("✅ Reply posted successfully!")
             return True
@@ -349,27 +309,26 @@ class TwitterBrowser:
             self.logger.error(f"❌ Error posting reply: {e}")
             return False
     
-    def follow_user(self, username):
+    async def follow_user(self, username):
         """Kullanıcıyı takip et"""
         if not self.is_logged_in:
-            if not self.login():
+            if not await self.login():
                 return False
         
         try:
             # Kullanıcı profiline git
-            self.driver.get(f"https://twitter.com/{username}")
-            time.sleep(5)
+            await self.page.goto(f"https://twitter.com/{username}", wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(3)
             
             # Follow butonunu bul
             try:
-                follow_button = WebDriverWait(self.driver, 8).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='follow']"))
-                )
-                follow_button.click()
-                time.sleep(2)
-                self.logger.info(f"✅ Followed @{username}")
-                return True
-            except TimeoutException:
+                follow_button = await self.page.wait_for_selector('div[data-testid="follow"]', timeout=8000)
+                if follow_button:
+                    await self.page.click('div[data-testid="follow"]')
+                    await asyncio.sleep(2)
+                    self.logger.info(f"✅ Followed @{username}")
+                    return True
+            except:
                 self.logger.info(f"ℹ️ @{username} already followed")
                 return True
                 
@@ -377,48 +336,48 @@ class TwitterBrowser:
             self.logger.error(f"❌ Error following @{username}: {e}")
             return False
     
-    def get_latest_tweet(self, username):
+    async def get_latest_tweet(self, username):
         """Kullanıcının son tweet'ini al"""
         if not self.is_logged_in:
-            if not self.login():
+            if not await self.login():
                 return None
         
         try:
             # Kullanıcı profiline git
-            self.driver.get(f"https://twitter.com/{username}")
-            time.sleep(8)
+            await self.page.goto(f"https://twitter.com/{username}", wait_until="networkidle", timeout=30000)
+            await asyncio.sleep(5)
             
             # Tweet'leri bul
-            tweet_elements = WebDriverWait(self.driver, 15).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "article[data-testid='tweet']"))
-            )
+            tweet_selector = 'article[data-testid="tweet"]'
+            await self.page.wait_for_selector(tweet_selector, timeout=15000)
             
-            if not tweet_elements:
+            # İlk tweet'i al
+            first_tweet = await self.page.query_selector(tweet_selector)
+            if not first_tweet:
                 self.logger.warning(f"⚠️ No tweets found for @{username}")
                 return None
             
-            # İlk tweet'i al
-            first_tweet = tweet_elements[0]
-            
             # Tweet metnini al
             try:
-                tweet_text_element = first_tweet.find_element(By.CSS_SELECTOR, "div[data-testid='tweetText']")
-                tweet_text = tweet_text_element.text
-            except NoSuchElementException:
+                tweet_text_element = await first_tweet.query_selector('div[data-testid="tweetText"]')
+                tweet_text = await tweet_text_element.inner_text() if tweet_text_element else "No text content"
+            except:
                 tweet_text = "No text content"
             
             # Tweet tarihini al
             try:
-                time_element = first_tweet.find_element(By.CSS_SELECTOR, "time")
-                tweet_time = time_element.get_attribute("datetime")
-            except NoSuchElementException:
+                time_element = await first_tweet.query_selector('time')
+                tweet_time = await time_element.get_attribute("datetime") if time_element else None
+            except:
                 tweet_time = None
             
             # Tweet URL'sini al
             try:
-                tweet_link = first_tweet.find_element(By.CSS_SELECTOR, "a[href*='/status/']")
-                tweet_url = tweet_link.get_attribute("href")
-            except NoSuchElementException:
+                tweet_link = await first_tweet.query_selector('a[href*="/status/"]')
+                tweet_url = await tweet_link.get_attribute("href") if tweet_link else None
+                if tweet_url and not tweet_url.startswith("https://"):
+                    tweet_url = f"https://twitter.com{tweet_url}"
+            except:
                 tweet_url = None
             
             tweet_data = {
@@ -435,11 +394,13 @@ class TwitterBrowser:
             self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
             return None
     
-    def close(self):
-        """Tarayıcıyı kapat"""
-        if self.driver:
-            try:
-                self.driver.quit()
-                self.logger.info("🔒 Browser closed")
-            except Exception as e:
-                self.logger.error(f"❌ Error closing browser: {e}")
+    async def close(self):
+        """Browser'ı kapat"""
+        try:
+            if self.browser:
+                await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
+            self.logger.info("🔒 Browser closed")
+        except Exception as e:
+            self.logger.error(f"❌ Error closing browser: {e}")
