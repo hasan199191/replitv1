@@ -271,7 +271,7 @@ class TwitterBrowser:
         """Email verification - EMAIL'DEN KOD AL"""
         try:
             self.logger.info("🔍 Checking for email verification...")
-            
+        
             # Email verification alanı var mı?
             verification_input = None
             try:
@@ -282,35 +282,27 @@ class TwitterBrowser:
             except:
                 self.logger.info("ℹ️ No email verification needed")
                 return True
-            
+        
             if not verification_input:
                 return True
-            
+        
             self.logger.info("📧 Email verification required - getting code from email...")
-            
-            # Gmail App Password kontrolü
-            gmail_app_password = os.environ.get('GMAIL_APP_PASSWORD')
-            if not gmail_app_password:
-                self.logger.error("❌ GMAIL_APP_PASSWORD not found!")
-                self.logger.info("⏳ Please enter verification code manually...")
-                await asyncio.sleep(60)  # 1 dakika bekle
-                return True
-            
-            # Email'den doğrulama kodunu al
+        
+            # Email'den doğrulama kodunu al (şifre otomatik kullanılacak)
             self.logger.info("📧 Retrieving verification code from email...")
             verification_code = self.email_handler.get_twitter_verification_code(timeout=90)
-            
+        
             if verification_code:
                 self.logger.info(f"✅ Got verification code: {verification_code}")
-                
+            
                 # Kodu gir
                 await verification_input.fill(verification_code)
                 await asyncio.sleep(1)
-                
+            
                 # Enter tuşuna bas
                 await self.page.keyboard.press('Enter')
                 self.logger.info("✅ Verification code submitted")
-                
+            
                 await asyncio.sleep(3)
                 return True
             else:
