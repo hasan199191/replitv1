@@ -7,6 +7,7 @@ import logging
 import random
 from datetime import datetime, timedelta
 from typing import Optional, Dict
+from email_handler import EmailHandler
 
 class TwitterBrowser:
     def __init__(self):
@@ -20,6 +21,7 @@ class TwitterBrowser:
         self.max_login_attempts = 3
         self.last_login_attempt = 0
         self.login_cooldown = 1800  # 30 dakika
+        self.email_handler = EmailHandler()  # Email handler ekle
         self.setup_logging()
         
     def setup_logging(self):
@@ -64,7 +66,7 @@ class TwitterBrowser:
             self.browser = await self.playwright.chromium.launch_persistent_context(
                 user_data_dir=self.user_data_dir,
                 headless=True,
-                viewport={'width': 1366, 'height': 768},  # Daha yaygın çözünürlük
+                viewport={'width': 1366, 'height': 768},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 args=[
                     '--no-sandbox',
@@ -161,7 +163,7 @@ class TwitterBrowser:
             return False
     
     async def check_login_status(self):
-        """Login durumunu kontrol et - GELİŞTİRİLMİŞ"""
+        """Login durumunu kontrol et"""
         try:
             self.logger.info("🔍 Checking login status...")
             
@@ -190,19 +192,13 @@ class TwitterBrowser:
                 self.logger.warning(f"⚠️ Error loading home page: {e}")
                 return False
             
-            # Login indicator'ları kontrol et - DAHA KAPSAMLI
+            # Login indicator'ları kontrol et
             login_indicators = [
-                # Tweet butonu
                 'a[data-testid="SideNav_NewTweet_Button"]',
-                # Ana timeline
                 '[data-testid="primaryColumn"]',
-                # Home link
                 'a[data-testid="AppTabBar_Home_Link"]',
-                # Profile menu
                 '[data-testid="SideNav_AccountSwitcher_Button"]',
-                # Tweet compose
                 '[data-testid="tweetTextarea_0"]',
-                # User menu
                 '[data-testid="UserAvatar-Container-unknown"]'
             ]
             
@@ -243,8 +239,74 @@ class TwitterBrowser:
             self.logger.error(f"❌ Error checking login status: {e}")
             return False
     
+    async def handle_email_verification(self):
+        """Email doğrulama kodunu işle"""
+        try:
+            self.logger.info("📧 Handling email verification...")
+            
+            # Email doğrulama alanını bekle
+            verification_selectors = [
+                'input[data-testid="ocfEnterTextTextInput"]',
+                'input[name="verfication_code"]',
+                'input[placeholder*="code"]',
+                'input[type="text"]'
+            ]
+            
+            verification_input = None
+            for selector in verification_selectors:
+                try:
+                    verification_input = await self.page.wait_for_selector(selector, timeout=5000)
+                    if verification_input:
+                        self.logger.info(f"📧 Found verification input: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not verification_input:
+                self.logger.info("ℹ️ No email verification required")
+                return True
+            
+            # Email'den doğrulama kodunu al
+            self.logger.info("📧 Getting verification code from email...")
+            verification_code = self.email_handler.get_twitter_verification_code(timeout=120)
+            
+            if verification_code:
+                self.logger.info(f"✅ Got verification code: {verification_code}")
+                
+                # Kodu gir
+                await self.page.fill(verification_input, verification_code)
+                await asyncio.sleep(random.uniform(1, 2))
+                
+                # Next/Submit butonuna tıkla
+                submit_selectors = [
+                    'xpath=//span[text()="Next"]',
+                    'xpath=//span[text()="Submit"]',
+                    'xpath=//span[text()="Verify"]',
+                    'xpath=//div[@role="button" and contains(., "Next")]'
+                ]
+                
+                for selector in submit_selectors:
+                    try:
+                        await self.page.click(selector)
+                        self.logger.info("✅ Verification code submitted")
+                        await asyncio.sleep(random.uniform(3, 5))
+                        return True
+                    except:
+                        continue
+                
+                self.logger.warning("⚠️ Could not find submit button for verification")
+                return False
+                
+            else:
+                self.logger.error("❌ Could not get verification code from email")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error handling email verification: {e}")
+            return False
+    
     async def login(self):
-        """Twitter'a giriş yap - GELİŞTİRİLMİŞ"""
+        """Twitter'a giriş yap - EMAIL DOĞRULAMA DESTEKLİ"""
         if not self.page:
             if not await self.initialize():
                 return False
@@ -258,7 +320,7 @@ class TwitterBrowser:
             return True
         
         try:
-            self.logger.info("🚀 Starting Twitter login process...")
+            self.logger.info("🚀 Starting Twitter login process with email verification support...")
             self.login_attempts += 1
             self.last_login_attempt = time.time()
             
@@ -315,6 +377,10 @@ class TwitterBrowser:
                     continue
             
             await asyncio.sleep(random.uniform(3, 5))
+            
+            # Email doğrulama kontrolü - YENİ!
+            if not await self.handle_email_verification():
+                self.logger.warning("⚠️ Email verification failed, continuing...")
             
             # Username verification kontrol et
             try:
@@ -379,6 +445,10 @@ class TwitterBrowser:
             # Login işleminin tamamlanmasını bekle
             await asyncio.sleep(random.uniform(8, 12))
             
+            # Tekrar email doğrulama gerekebilir
+            if not await self.handle_email_verification():
+                self.logger.info("ℹ️ No additional email verification needed")
+            
             # Login başarılı mı kontrol et
             if await self.check_login_status():
                 self.logger.info("🎉 LOGIN SUCCESSFUL!")
@@ -433,7 +503,7 @@ class TwitterBrowser:
             return False
     
     async def post_tweet(self, content):
-        """Tweet gönder - GELİŞTİRİLMİŞ"""
+        """Tweet gönder"""
         if not self.is_logged_in:
             if not await self.login():
                 return False
@@ -512,7 +582,7 @@ class TwitterBrowser:
             return False
     
     async def reply_to_tweet(self, tweet_url, reply_content):
-        """Tweet'e yanıt ver - GELİŞTİRİLMİŞ"""
+        """Tweet'e yanıt ver"""
         if not self.is_logged_in:
             if not await self.login():
                 return False
