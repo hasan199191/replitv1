@@ -63,7 +63,7 @@ class TwitterBrowser:
             # Daha gerçekçi browser ayarları
             self.browser = await self.playwright.chromium.launch_persistent_context(
                 user_data_dir=self.user_data_dir,
-                headless=True,
+                headless=False,  # Tarayıcıyı görünür yap
                 viewport={'width': 1366, 'height': 768},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 args=[
@@ -241,7 +241,7 @@ class TwitterBrowser:
         """Herhangi bir doğrulama adımını işle"""
         try:
             self.logger.info("🔍 Checking for verification requirements...")
-        
+            
             # Doğrulama alanı var mı kontrol et
             verification_selectors = [
                 'input[data-testid="ocfEnterTextTextInput"]',
@@ -250,7 +250,7 @@ class TwitterBrowser:
                 'input[placeholder*="username"]',
                 'input[type="text"]'
             ]
-        
+            
             verification_input = None
             for selector in verification_selectors:
                 try:
@@ -260,31 +260,34 @@ class TwitterBrowser:
                         break
                 except:
                     continue
-        
+            
             if not verification_input:
                 self.logger.info("ℹ️ No verification required")
                 return True
-        
+            
             # Placeholder veya label'dan ne istendiğini anlamaya çalış
             try:
                 placeholder = await verification_input.get_attribute("placeholder") or ""
                 aria_label = await verification_input.get_attribute("aria-label") or ""
-            
+                
                 self.logger.info(f"🔍 Verification field placeholder: '{placeholder}'")
                 self.logger.info(f"🔍 Verification field aria-label: '{aria_label}'")
-            
+                
+                # Username/email/phone istiyor mu kontrol et
+                verification_text = (placeholder + aria_label).lower()
+                
                 # Twitter username'i gir (çoğu durumda bu işe yarar)
                 username = os.environ.get('TWITTER_USERNAME')
                 if not username:
                     self.logger.error("❌ TWITTER_USERNAME not found in environment variables")
                     return False
-            
-                await self.page.click(verification_input)
+                
+                await verification_input.click()
                 await asyncio.sleep(1)
-                await self.page.fill(verification_input, username)
+                await verification_input.fill(username)
                 await asyncio.sleep(random.uniform(1, 2))
                 self.logger.info(f"👤 Entered username: {username}")
-            
+                
                 # Next/Submit butonuna tıkla
                 submit_selectors = [
                     'xpath=//span[text()="Next"]',
@@ -293,7 +296,7 @@ class TwitterBrowser:
                     'xpath=//div[@role="button" and contains(., "Next")]',
                     '[data-testid="ocfEnterTextNextButton"]'
                 ]
-            
+                
                 for selector in submit_selectors:
                     try:
                         await self.page.click(selector)
@@ -302,21 +305,21 @@ class TwitterBrowser:
                         return True
                     except:
                         continue
-            
+                
                 self.logger.warning("⚠️ Could not find submit button")
                 return True
-            
+                
             except Exception as e:
                 self.logger.error(f"❌ Error handling verification input: {e}")
                 # Hata olsa bile username girmeyi dene
                 try:
                     username = os.environ.get('TWITTER_USERNAME')
                     if username:
-                        await self.page.click(verification_input)
+                        await verification_input.click()
                         await asyncio.sleep(1)
-                        await self.page.fill(verification_input, username)
+                        await verification_input.fill(username)
                         await asyncio.sleep(2)
-                    
+                        
                         # Next butonunu bul ve tıkla
                         try:
                             await self.page.click('xpath=//span[text()="Next"]')
@@ -328,7 +331,7 @@ class TwitterBrowser:
                 except:
                     pass
                 return False
-            
+                
         except Exception as e:
             self.logger.error(f"❌ Error in verification handler: {e}")
             return False
@@ -373,36 +376,55 @@ class TwitterBrowser:
                     await self.page.wait_for_selector(selector, timeout=10000)
                     await asyncio.sleep(random.uniform(1, 2))
                     
-                    # İnsan gibi yazma simülasyonu
-                    email = os.environ.get('EMAIL_USER')
+                    # Username ile giriş yap (email yerine)
+                    username = os.environ.get('TWITTER_USERNAME')
+                    if not username:
+                        # Fallback olarak email kullan
+                        username = os.environ.get('EMAIL_USER')
+                    
                     await self.page.click(selector)
                     await asyncio.sleep(0.5)
-                    await self.page.fill(selector, email)
+                    await self.page.fill(selector, username)
                     await asyncio.sleep(random.uniform(0.5, 1))
                     
-                    self.logger.info("📧 Email entered")
+                    self.logger.info(f"� Username entered: {username}")
                     email_filled = True
                     break
                 except:
                     continue
             
             if not email_filled:
-                raise Exception("Could not find email input field")
+                raise Exception("Could not find username/email input field")
             
-            # Next butonuna tıkla
+            # Next butonuna tıkla - daha kapsamlı selectors
             next_selectors = [
                 'xpath=//span[text()="Next"]',
+                'xpath=//span[text()="İleri"]',
                 'xpath=//div[@role="button" and contains(., "Next")]',
-                '[data-testid="LoginForm_Login_Button"]'
+                'xpath=//div[@role="button" and contains(., "İleri")]',
+                '[data-testid="LoginForm_Login_Button"]',
+                'xpath=//button[contains(., "Next")]',
+                'xpath=//button[contains(., "İleri")]',
+                'xpath=//div[contains(@class, "r-13awgt0") and contains(., "Next")]'
             ]
             
+            next_clicked = False
             for selector in next_selectors:
                 try:
                     await self.page.click(selector)
                     self.logger.info("➡️ Next button clicked")
+                    next_clicked = True
                     break
                 except:
                     continue
+            
+            # Eğer Next butonuna tıklayamazsa Enter tuşuna bas
+            if not next_clicked:
+                try:
+                    await self.page.keyboard.press('Enter')
+                    self.logger.info("⌨️ Enter key pressed")
+                except:
+                    pass
             
             await asyncio.sleep(random.uniform(3, 5))
             
