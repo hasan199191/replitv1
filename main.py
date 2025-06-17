@@ -7,7 +7,7 @@ import signal
 import sys
 from datetime import datetime, timedelta
 import random
-from twitter_browser_playwright import TwitterBrowserPlaywright
+from twitter_browser import TwitterBrowser
 from advanced_content_generator import AdvancedContentGenerator
 from health_server import start_health_server
 
@@ -44,7 +44,7 @@ class TwitterBot:
             logging.info("🧠 Content generator initialized")
             
             # Twitter tarayıcısını başlat (Playwright)
-            self.twitter_browser = TwitterBrowserPlaywright()
+            self.twitter_browser = TwitterBrowser()
             if not await self.twitter_browser.initialize():
                 raise Exception("Twitter browser could not be initialized")
             
