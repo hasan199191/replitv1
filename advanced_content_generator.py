@@ -27,7 +27,7 @@ class AdvancedContentGenerator:
         ]
         
     async def initialize(self):
-        """Initialize Gemini AI"""
+        """Initialize Gemini AI with Flash 2.0"""
         try:
             self.api_key = os.environ.get('GEMINI_API_KEY')
             
@@ -35,16 +35,46 @@ class AdvancedContentGenerator:
                 raise Exception("Gemini API key not found")
             
             genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel('gemini-pro')
+            
+            # Gemini Flash 2.0 modelini kullan (ücretsiz)
+            self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
             
             self.load_data()
             
-            logging.info("Advanced Gemini AI and data lists successfully initialized")
+            logging.info("Advanced Gemini Flash 2.0 and data lists successfully initialized")
             return True
             
         except Exception as e:
-            logging.error(f"Error initializing Gemini AI: {e}")
-            raise
+            logging.error(f"Error initializing Gemini Flash 2.0: {e}")
+            # Fallback olarak başka modeller dene
+            try:
+                logging.info("Trying fallback models...")
+                
+                # Diğer ücretsiz modelleri dene
+                fallback_models = [
+                    'gemini-1.5-flash',
+                    'gemini-1.5-flash-latest',
+                    'gemini-flash'
+                ]
+                
+                for model_name in fallback_models:
+                    try:
+                        self.model = genai.GenerativeModel(model_name)
+                        # Test et
+                        test_response = self.model.generate_content("Test")
+                        if test_response.text:
+                            logging.info(f"Successfully initialized with {model_name}")
+                            self.load_data()
+                            return True
+                    except Exception as model_error:
+                        logging.warning(f"Model {model_name} failed: {model_error}")
+                        continue
+                
+                raise Exception("All Gemini models failed")
+                
+            except Exception as fallback_error:
+                logging.error(f"Fallback models also failed: {fallback_error}")
+                raise
     
     def load_data(self):
         """Load project and account lists"""
