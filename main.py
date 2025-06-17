@@ -51,8 +51,8 @@ class TwitterBot:
             if not await self.twitter_browser.initialize():
                 raise Exception("Twitter browser could not be initialized")
             
-            # Twitter'a giriş yap - SADECE GEREKTİĞİNDE
-            login_success = await self.twitter_browser.check_login_status()
+            # Twitter'a giriş yap - SADECE GEREKTİĞINDE
+            login_success = await self.twitter_browser.quick_login_check()
             if not login_success:
                 logging.info("🔐 Login required, attempting to login...")
                 login_success = await self.twitter_browser.login()
@@ -85,7 +85,7 @@ class TwitterBot:
             logging.info("⏰ Starting hourly workflow...")
             
             # Session durumunu kontrol et
-            if not await self.twitter_browser.check_login_status():
+            if not await self.twitter_browser.quick_login_check():
                 logging.warning("⚠️ Session lost, attempting to restore...")
                 if not await self.twitter_browser.login():
                     logging.error("❌ Could not restore session, skipping this cycle")
@@ -258,7 +258,7 @@ class TwitterBot:
                 current_time = datetime.now()
                 if current_time.minute == 0 and current_time.hour % 12 == 0:
                     logging.info("🔍 Periodic session health check...")
-                    if not await self.twitter_browser.check_login_status():
+                    if not await self.twitter_browser.quick_login_check():
                         logging.warning("⚠️ Session lost during health check")
                         # Login yapmaya çalışma, sadece log tut
                         # Bir sonraki workflow'da otomatik düzelecek
