@@ -27,190 +27,181 @@ class TwitterBot:
         self.content_generator = AdvancedContentGenerator()
         self.is_running = False
         self.health_server = None
-        self.last_activity = None
+        self.bot_initialized = False
         
     async def initialize(self):
-        """Bot'u başlat ve Twitter'a bağlan"""
+        """Bot'u başlat ve Twitter'a giriş yap"""
         try:
+            logging.info("🤖 Initializing Twitter Bot...")
+            
             # Health server'ı başlat (Render için gerekli)
             if os.environ.get('IS_RENDER'):
                 self.health_server = start_health_server()
-                logging.info("Health server started for Render.com")
+                logging.info("🏥 Health server started for Render.com")
             
             # İçerik üreticisini başlat
             await self.content_generator.initialize()
+            logging.info("🧠 Content generator initialized")
             
-            # Twitter tarayıcısını başlat - PERSISTENT SESSION ile
+            # Twitter tarayıcısını başlat
             self.twitter_browser = TwitterBrowser()
             if not self.twitter_browser.initialize():
                 raise Exception("Twitter browser could not be initialized")
             
-            # Twitter'a giriş yap (session varsa otomatik giriş)
+            # Twitter'a giriş yap - BU SADECE BİR KEZ YAPILACAK
             if not self.twitter_browser.login():
                 raise Exception("Could not login to Twitter")
             
-            logging.info("✅ Bot successfully initialized with persistent session")
-            return True
-            
-        except Exception as e:
-            logging.error(f"Error initializing bot: {e}")
-            return False
-    
-    async def ensure_twitter_connection(self):
-        """Twitter bağlantısının aktif olduğundan emin ol"""
-        try:
-            if not self.twitter_browser or not self.twitter_browser.is_logged_in:
-                logging.info("Twitter connection lost, reconnecting...")
-                
-                if self.twitter_browser:
-                    self.twitter_browser.close()
-                
-                self.twitter_browser = TwitterBrowser()
-                if not self.twitter_browser.initialize():
-                    return False
-                
-                if not self.twitter_browser.login():
-                    return False
-                
-                logging.info("✅ Twitter connection restored")
+            self.bot_initialized = True
+            logging.info("🎉 Bot successfully initialized and logged in!")
+            logging.info("📱 Session will persist - no need to login again!")
             
             return True
             
         except Exception as e:
-            logging.error(f"Error ensuring Twitter connection: {e}")
+            logging.error(f"❌ Error initializing bot: {e}")
             return False
     
-    async def post_hourly_content(self):
-        """Hourly content posting"""
+    async def hourly_workflow(self):
+        """Saatlik workflow - 2 proje paylaş + tweet'lere yanıt ver"""
         try:
-            logging.info("🚀 Starting hourly content posting...")
+            logging.info("⏰ Starting hourly workflow...")
             
-            # Twitter bağlantısını kontrol et
-            if not await self.ensure_twitter_connection():
-                logging.error("Could not establish Twitter connection")
-                return
+            # 1. İki Web3 projesi seç ve paylaş
+            await self.post_project_content()
             
-            # Select 2 projects from the list
+            # Projeler arası bekleme
+            await asyncio.sleep(60)
+            
+            # 2. Takip edilen hesapların tweetlerine yanıt ver
+            await self.reply_to_monitored_tweets()
+            
+            logging.info("✅ Hourly workflow completed!")
+            
+        except Exception as e:
+            logging.error(f"❌ Error in hourly workflow: {e}")
+    
+    async def post_project_content(self):
+        """2 Web3 projesi seç ve içerik paylaş"""
+        try:
+            logging.info("🚀 Selecting and posting Web3 project content...")
+            
+            # 2 proje seç
             selected_projects = self.content_generator.select_random_projects(2)
+            logging.info(f"📋 Selected projects: {[p['name'] for p in selected_projects]}")
             
             for i, project in enumerate(selected_projects):
                 try:
-                    # Generate content with Gemini
+                    # İçerik üret
                     content = await self.content_generator.generate_project_content(project)
                     
                     if content:
-                        # Post to Twitter
+                        # Tweet gönder
                         success = self.twitter_browser.post_tweet(content)
                         if success:
-                            logging.info(f"✅ Content successfully posted: {project['name']}")
-                            self.last_activity = datetime.now()
+                            logging.info(f"✅ Posted content for {project['name']}")
+                            logging.info(f"📝 Content: {content[:100]}...")
                         else:
-                            logging.error(f"❌ Failed to post content: {project['name']}")
+                            logging.error(f"❌ Failed to post content for {project['name']}")
                     else:
-                        logging.error(f"❌ No content generated for: {project['name']}")
+                        logging.error(f"❌ No content generated for {project['name']}")
                     
-                    # Wait between projects (avoid rate limits)
+                    # Projeler arası bekleme (rate limit koruması)
                     if i < len(selected_projects) - 1:
+                        logging.info("⏳ Waiting 45 seconds before next project...")
                         await asyncio.sleep(45)
                         
                 except Exception as e:
-                    logging.error(f"Error processing project {project['name']}: {e}")
+                    logging.error(f"❌ Error processing project {project['name']}: {e}")
                     continue
                 
         except Exception as e:
-            logging.error(f"Error in hourly content posting: {e}")
+            logging.error(f"❌ Error in project content posting: {e}")
     
-    async def check_and_reply_to_tweets(self):
-        """Check monitored accounts and reply to tweets"""
+    async def reply_to_monitored_tweets(self):
+        """Takip edilen hesapların son tweetlerine yanıt ver"""
         try:
-            logging.info("🔍 Checking monitored accounts for new tweets...")
+            logging.info("💬 Checking monitored accounts for replies...")
             
-            # Twitter bağlantısını kontrol et
-            if not await self.ensure_twitter_connection():
-                logging.error("Could not establish Twitter connection")
-                return
-            
-            # Select random 3 accounts (reduced from 5 to avoid rate limits)
+            # 3 hesap seç (rate limit için azalttık)
             selected_accounts = self.content_generator.get_random_accounts(3)
+            logging.info(f"👥 Selected accounts: {selected_accounts}")
             
             for i, username in enumerate(selected_accounts):
                 try:
-                    # Follow the user
+                    # Kullanıcıyı takip et
                     self.twitter_browser.follow_user(username)
                     
-                    # Get latest tweet
+                    # Son tweet'i al
                     tweet_data = self.twitter_browser.get_latest_tweet(username)
                     
-                    if tweet_data:
-                        # Check if tweet is within last 2 hours (increased window)
+                    if tweet_data and tweet_data.get('url'):
+                        # Tweet zamanını kontrol et (son 2 saat içinde mi?)
                         if tweet_data.get('time'):
                             tweet_time = datetime.fromisoformat(tweet_data['time'].replace('Z', '+00:00'))
                             now = datetime.now().astimezone()
                             
                             if now - tweet_time < timedelta(hours=2):
-                                # Generate reply with Gemini
+                                # Yanıt üret
                                 reply_content = await self.content_generator.generate_reply(tweet_data)
                                 
                                 if reply_content:
-                                    # Send reply
+                                    # Yanıt gönder
                                     success = self.twitter_browser.reply_to_tweet(
                                         tweet_data['url'], 
                                         reply_content
                                     )
                                     
                                     if success:
-                                        logging.info(f"✅ Successfully replied to @{username}")
-                                        self.last_activity = datetime.now()
+                                        logging.info(f"✅ Replied to @{username}")
+                                        logging.info(f"💬 Reply: {reply_content[:100]}...")
                                     else:
                                         logging.error(f"❌ Failed to reply to @{username}")
                                 else:
                                     logging.error(f"❌ No reply generated for @{username}")
                             else:
-                                logging.info(f"ℹ️ @{username}'s latest tweet is older than 2 hours, skipping")
+                                logging.info(f"⏰ @{username}'s tweet is older than 2 hours, skipping")
                         else:
                             logging.warning(f"⚠️ Could not determine tweet time for @{username}")
                     else:
-                        logging.warning(f"⚠️ No tweets found for @{username}")
+                        logging.warning(f"⚠️ No recent tweets found for @{username}")
                     
-                    # Wait between accounts (avoid rate limits)
+                    # Hesaplar arası bekleme (rate limit koruması)
                     if i < len(selected_accounts) - 1:
-                        await asyncio.sleep(120)  # Increased wait time
+                        logging.info("⏳ Waiting 90 seconds before next account...")
+                        await asyncio.sleep(90)
                     
                 except Exception as e:
-                    logging.error(f"Error processing @{username}: {e}")
+                    logging.error(f"❌ Error processing @{username}: {e}")
                     continue
                     
         except Exception as e:
-            logging.error(f"Error checking and replying to tweets: {e}")
+            logging.error(f"❌ Error in reply workflow: {e}")
     
     def schedule_tasks(self):
-        """Schedule bot tasks"""
-        # Hourly content posting
+        """Görevleri zamanla - Her saat başı çalışacak"""
+        # Her saat başında workflow çalıştır
         schedule.every().hour.at(":00").do(
-            lambda: asyncio.create_task(self.post_hourly_content())
+            lambda: asyncio.create_task(self.hourly_workflow())
         )
         
-        # Tweet checking and replying every 2 hours
-        schedule.every(2).hours.at(":30").do(
-            lambda: asyncio.create_task(self.check_and_reply_to_tweets())
-        )
-        
-        logging.info("📅 Tasks scheduled successfully")
+        logging.info("📅 Scheduled hourly workflow (every hour at :00)")
     
     def signal_handler(self, signum, frame):
-        """Handle shutdown signals"""
-        logging.info(f"Received signal {signum}, shutting down gracefully...")
+        """Shutdown signal handler"""
+        logging.info(f"🛑 Received signal {signum}, shutting down gracefully...")
         self.is_running = False
         if self.twitter_browser:
             self.twitter_browser.close()
         sys.exit(0)
     
     async def run(self):
-        """Run the bot"""
-        # Set up signal handlers
+        """Bot'u çalıştır"""
+        # Signal handlers
         signal.signal(signal.SIGTERM, self.signal_handler)
         signal.signal(signal.SIGINT, self.signal_handler)
         
+        # Bot'u başlat
         if not await self.initialize():
             logging.error("❌ Bot could not be initialized")
             return
@@ -218,24 +209,33 @@ class TwitterBot:
         self.is_running = True
         self.schedule_tasks()
         
-        logging.info("🤖 Bot started successfully and is running with persistent session...")
+        logging.info("🤖 Twitter Bot is now running!")
+        logging.info("⏰ Will execute workflow every hour at :00")
+        logging.info("📱 Session is persistent - no repeated logins needed")
         
-        # Run initial content posting
-        await self.post_hourly_content()
+        # İlk workflow'u hemen çalıştır
+        logging.info("🚀 Running initial workflow...")
+        await self.hourly_workflow()
         
-        # Main loop - PERSISTENT SESSION ile sürekli çalışır
+        # Ana döngü - Sürekli çalış
         while self.is_running:
             try:
                 schedule.run_pending()
-                await asyncio.sleep(60)  # Check every minute
+                await asyncio.sleep(60)  # Her dakika kontrol et
                 
                 # Her 6 saatte bir session durumunu kontrol et
-                if self.last_activity and (datetime.now() - self.last_activity).seconds > 21600:  # 6 saat
-                    logging.info("🔄 Checking session health...")
-                    await self.ensure_twitter_connection()
+                current_time = datetime.now()
+                if current_time.minute == 0 and current_time.hour % 6 == 0:
+                    logging.info("🔍 Checking session health...")
+                    if not self.twitter_browser.check_login_status():
+                        logging.warning("⚠️ Session lost, attempting to restore...")
+                        if not self.twitter_browser.login():
+                            logging.error("❌ Could not restore session")
+                        else:
+                            logging.info("✅ Session restored")
                     
             except Exception as e:
-                logging.error(f"Error in main loop: {e}")
+                logging.error(f"❌ Error in main loop: {e}")
                 await asyncio.sleep(60)
 
 async def main():
@@ -243,14 +243,18 @@ async def main():
     try:
         await bot.run()
     except KeyboardInterrupt:
-        logging.info("Bot stopped by user")
+        logging.info("🛑 Bot stopped by user")
     except Exception as e:
-        logging.error(f"Unexpected error: {e}")
+        logging.error(f"❌ Unexpected error: {e}")
     finally:
-        # Clean shutdown
+        # Temiz kapatma
         if bot.twitter_browser:
             bot.twitter_browser.close()
-        logging.info("Bot shutdown complete")
+        logging.info("👋 Bot shutdown complete")
 
 if __name__ == "__main__":
+    # Logs klasörünü oluştur
+    os.makedirs('logs', exist_ok=True)
+    
+    # Bot'u çalıştır
     asyncio.run(main())
