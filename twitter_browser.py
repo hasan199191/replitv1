@@ -7,7 +7,6 @@ import logging
 import random
 from datetime import datetime, timedelta
 from typing import Optional, Dict
-from email_handler import EmailHandler
 
 class TwitterBrowser:
     def __init__(self):
@@ -21,7 +20,6 @@ class TwitterBrowser:
         self.max_login_attempts = 3
         self.last_login_attempt = 0
         self.login_cooldown = 1800  # 30 dakika
-        self.email_handler = EmailHandler()  # Email handler ekle
         self.setup_logging()
         
     def setup_logging(self):
@@ -239,74 +237,98 @@ class TwitterBrowser:
             self.logger.error(f"❌ Error checking login status: {e}")
             return False
     
-    async def handle_email_verification(self):
-        """Email doğrulama kodunu işle"""
+    async def handle_verification_step(self):
+        """Herhangi bir doğrulama adımını işle"""
         try:
-            self.logger.info("📧 Handling email verification...")
+            self.logger.info("🔍 Checking for verification requirements...")
             
-            # Email doğrulama alanını bekle
+            # Doğrulama alanı var mı kontrol et
             verification_selectors = [
                 'input[data-testid="ocfEnterTextTextInput"]',
                 'input[name="verfication_code"]',
                 'input[placeholder*="code"]',
+                'input[placeholder*="username"]',
                 'input[type="text"]'
             ]
             
             verification_input = None
             for selector in verification_selectors:
                 try:
-                    verification_input = await self.page.wait_for_selector(selector, timeout=5000)
+                    verification_input = await self.page.wait_for_selector(selector, timeout=3000)
                     if verification_input:
-                        self.logger.info(f"📧 Found verification input: {selector}")
+                        self.logger.info(f"🔍 Found verification input: {selector}")
                         break
                 except:
                     continue
             
             if not verification_input:
-                self.logger.info("ℹ️ No email verification required")
+                self.logger.info("ℹ️ No verification required")
                 return True
             
-            # Email'den doğrulama kodunu al
-            self.logger.info("📧 Getting verification code from email...")
-            verification_code = self.email_handler.get_twitter_verification_code(timeout=120)
-            
-            if verification_code:
-                self.logger.info(f"✅ Got verification code: {verification_code}")
+            # Placeholder veya label'dan ne istendiğini anlamaya çalış
+            try:
+                placeholder = await verification_input.get_attribute("placeholder") or ""
+                aria_label = await verification_input.get_attribute("aria-label") or ""
                 
-                # Kodu gir
-                await self.page.fill(verification_input, verification_code)
-                await asyncio.sleep(random.uniform(1, 2))
+                self.logger.info(f"🔍 Verification field placeholder: '{placeholder}'")
+                self.logger.info(f"🔍 Verification field aria-label: '{aria_label}'")
+                
+                # Username istiyor mu?
+                if any(keyword in (placeholder + aria_label).lower() for keyword in ['username', 'phone', 'email']):
+                    username = os.environ.get('TWITTER_USERNAME')
+                    if username:
+                        await self.page.click(verification_input)
+                        await asyncio.sleep(1)
+                        await self.page.fill(verification_input, username)
+                        await asyncio.sleep(random.uniform(1, 2))
+                        self.logger.info(f"👤 Entered username: {username}")
+                    else:
+                        self.logger.error("❌ TWITTER_USERNAME not found in environment variables")
+                        return False
+                else:
+                    # Bilinmeyen doğrulama türü, username dene
+                    username = os.environ.get('TWITTER_USERNAME')
+                    if username:
+                        await self.page.click(verification_input)
+                        await asyncio.sleep(1)
+                        await self.page.fill(verification_input, username)
+                        await asyncio.sleep(random.uniform(1, 2))
+                        self.logger.info(f"👤 Tried username: {username}")
+                    else:
+                        self.logger.error("❌ TWITTER_USERNAME not found")
+                        return False
                 
                 # Next/Submit butonuna tıkla
                 submit_selectors = [
                     'xpath=//span[text()="Next"]',
                     'xpath=//span[text()="Submit"]',
                     'xpath=//span[text()="Verify"]',
-                    'xpath=//div[@role="button" and contains(., "Next")]'
+                    'xpath=//div[@role="button" and contains(., "Next")]',
+                    '[data-testid="ocfEnterTextNextButton"]'
                 ]
                 
                 for selector in submit_selectors:
                     try:
                         await self.page.click(selector)
-                        self.logger.info("✅ Verification code submitted")
+                        self.logger.info("✅ Verification submitted")
                         await asyncio.sleep(random.uniform(3, 5))
                         return True
                     except:
                         continue
                 
-                self.logger.warning("⚠️ Could not find submit button for verification")
-                return False
+                self.logger.warning("⚠️ Could not find submit button")
+                return True
                 
-            else:
-                self.logger.error("❌ Could not get verification code from email")
+            except Exception as e:
+                self.logger.error(f"❌ Error handling verification input: {e}")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"❌ Error handling email verification: {e}")
+            self.logger.error(f"❌ Error in verification handler: {e}")
             return False
     
     async def login(self):
-        """Twitter'a giriş yap - EMAIL DOĞRULAMA DESTEKLİ"""
+        """Twitter'a giriş yap - BASİTLEŞTİRİLMİŞ"""
         if not self.page:
             if not await self.initialize():
                 return False
@@ -320,7 +342,7 @@ class TwitterBrowser:
             return True
         
         try:
-            self.logger.info("🚀 Starting Twitter login process with email verification support...")
+            self.logger.info("🚀 Starting Twitter login process...")
             self.login_attempts += 1
             self.last_login_attempt = time.time()
             
@@ -378,26 +400,9 @@ class TwitterBrowser:
             
             await asyncio.sleep(random.uniform(3, 5))
             
-            # Email doğrulama kontrolü - YENİ!
-            if not await self.handle_email_verification():
-                self.logger.warning("⚠️ Email verification failed, continuing...")
-            
-            # Username verification kontrol et
-            try:
-                username_field = await self.page.wait_for_selector(
-                    'input[data-testid="ocfEnterTextTextInput"]', 
-                    timeout=8000
-                )
-                if username_field:
-                    username = os.environ.get('TWITTER_USERNAME')
-                    await self.page.fill('input[data-testid="ocfEnterTextTextInput"]', username)
-                    await asyncio.sleep(random.uniform(1, 2))
-                    self.logger.info("👤 Username verification completed")
-                    
-                    await self.page.click('xpath=//span[text()="Next"]')
-                    await asyncio.sleep(random.uniform(3, 5))
-            except:
-                self.logger.info("⏭️ Username verification skipped")
+            # Herhangi bir doğrulama adımını işle
+            if not await self.handle_verification_step():
+                self.logger.warning("⚠️ Verification step failed, continuing...")
             
             # Password alanını bul ve doldur
             password_selectors = [
@@ -445,9 +450,9 @@ class TwitterBrowser:
             # Login işleminin tamamlanmasını bekle
             await asyncio.sleep(random.uniform(8, 12))
             
-            # Tekrar email doğrulama gerekebilir
-            if not await self.handle_email_verification():
-                self.logger.info("ℹ️ No additional email verification needed")
+            # Tekrar doğrulama gerekebilir
+            if not await self.handle_verification_step():
+                self.logger.info("ℹ️ No additional verification needed")
             
             # Login başarılı mı kontrol et
             if await self.check_login_status():
