@@ -1,73 +1,71 @@
+import os
+import time
+import random
+import logging
+import smtplib
+import ssl
+import json
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException, ElementClickInterceptedException, JavascriptException
 from webdriver_manager.chrome import ChromeDriverManager
-import time
-import os
-import pickle
-import logging
-import random
+import undetected_chromedriver as uc
+import requests
+from bs4 import BeautifulSoup
+import re
+from datetime import datetime, timedelta
 import subprocess
 
 class TwitterBrowser:
-    def __init__(self):
+    def __init__(self, headless=True, debug=False):
+        self.headless = headless
+        self.debug = debug
+        self.logger = self.setup_logger()
         self.driver = None
-        self.cookies_file = 'data/twitter_cookies.pkl'
-        self.is_logged_in = False
-        self.setup_logging()
+        self.wait_time = 10
+        self.short_wait_time = 5
+        self.scroll_pause_time = 2
+        self.max_attempts = 3
+        self.email_sender = os.environ.get('EMAIL_USER')
+        self.email_password = os.environ.get('EMAIL_PASS')
+        self.email_receiver = os.environ.get('EMAIL_RECEIVER')
+        self.twitter_username = os.environ.get('TWITTER_USERNAME')
+        self.twitter_password = os.environ.get('TWITTER_PASSWORD')
+        self.is_initialized = False
+
+    def setup_logger(self):
+        """Logger'ı ayarlar."""
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
         
-    def setup_logging(self):
-        """Loglama ayarlarını yapılandır"""
-        self.logger = logging.getLogger('TwitterBrowser')
-        self.logger.setLevel(logging.INFO)
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
+        # Aynı logger'a birden fazla handler eklenmesini önle
+        if not logger.hasHandlers():
+            ch = logging.StreamHandler()
             formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
-    
+            ch.setFormatter(formatter)
+            logger.addHandler(ch)
+        
+        return logger
+
     def get_chrome_version(self):
-        """Chrome versiyonunu al"""
+        """Chrome versiyonunu tespit eder."""
         try:
-            result = subprocess.run(['google-chrome', '--version'], 
-                                  capture_output=True, text=True)
-            version = result.stdout.strip().split()[-1]
-            self.logger.info(f"Chrome version detected: {version}")
+            output = subprocess.check_output(['google-chrome', '--version'])
+            version = output.decode('utf-8').strip()
             return version
-        except Exception as e:
-            self.logger.error(f"Error getting Chrome version: {e}")
+        except FileNotFoundError:
+            self.logger.warning("Google Chrome bulunamadı.")
             return None
-    
-    def fix_chromedriver_path(self, driver_path):
-        """webdriver-manager'ın yanlış path sorununu çöz"""
-        try:
-            # webdriver-manager bazen yanlış dosyayı işaret ediyor
-            if 'THIRD_PARTY_NOTICES' in driver_path:
-                # Doğru chromedriver dosyasını bul
-                driver_dir = os.path.dirname(driver_path)
-                for file in os.listdir(driver_dir):
-                    if file == 'chromedriver' or file == 'chromedriver.exe':
-                        correct_path = os.path.join(driver_dir, file)
-                        self.logger.info(f"Fixed ChromeDriver path: {correct_path}")
-                        return correct_path
-                
-                # chromedriver-linux64 klasörünü kontrol et
-                linux64_dir = os.path.join(driver_dir, 'chromedriver-linux64')
-                if os.path.exists(linux64_dir):
-                    chromedriver_path = os.path.join(linux64_dir, 'chromedriver')
-                    if os.path.exists(chromedriver_path):
-                        self.logger.info(f"Found ChromeDriver in linux64 dir: {chromedriver_path}")
-                        return chromedriver_path
-            
-            return driver_path
         except Exception as e:
-            self.logger.error(f"Error fixing ChromeDriver path: {e}")
-            return driver_path
-    
+            self.logger.error(f"Chrome versiyonu alınırken hata oluştu: {e}")
+            return None
+
     def initialize(self):
         """Tarayıcıyı başlat"""
         try:
@@ -106,363 +104,382 @@ class TwitterBrowser:
                     service = Service('/usr/bin/chromedriver')
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
                     self.logger.info("Successfully using system ChromeDriver")
+                    
+                    # Debug: Environment variables kontrolü
+                    self.logger.info(f"EMAIL_USER set: {'Yes' if os.environ.get('EMAIL_USER') else 'No'}")
+                    self.logger.info(f"TWITTER_USERNAME set: {'Yes' if os.environ.get('TWITTER_USERNAME') else 'No'}")
+                    self.logger.info(f"TWITTER_PASSWORD set: {'Yes' if os.environ.get('TWITTER_PASSWORD') else 'No'}")
+                    
                     return True
                 except Exception as e:
                     self.logger.warning(f"System ChromeDriver failed: {e}")
             
-            # 2. webdriver-manager ile dene
+            # 2. Eğer sistemde yoksa, webdriver_manager ile kurmayı dene
             try:
-                self.logger.info("Trying webdriver-manager...")
-                driver_path = ChromeDriverManager().install()
+                service = Service(ChromeDriverManager().install())
+                self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                self.logger.info("Successfully using webdriver_manager ChromeDriver")
                 
-                # Path'i düzelt
-                fixed_path = self.fix_chromedriver_path(driver_path)
+                # Debug: Environment variables kontrolü
+                self.logger.info(f"EMAIL_USER set: {'Yes' if os.environ.get('EMAIL_USER') else 'No'}")
+                self.logger.info(f"TWITTER_USERNAME set: {'Yes' if os.environ.get('TWITTER_USERNAME') else 'No'}")
+                self.logger.info(f"TWITTER_PASSWORD set: {'Yes' if os.environ.get('TWITTER_PASSWORD') else 'No'}")
                 
-                # Dosyanın executable olduğundan emin ol
-                if os.path.exists(fixed_path):
-                    os.chmod(fixed_path, 0o755)
-                    service = Service(fixed_path)
-                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                    self.logger.info(f"Successfully using webdriver-manager ChromeDriver: {fixed_path}")
-                    return True
-                else:
-                    self.logger.error(f"ChromeDriver not found at: {fixed_path}")
-                    
+                return True
             except Exception as e:
-                self.logger.error(f"webdriver-manager failed: {e}")
-            
-            # 3. Manuel download dene
-            try:
-                self.logger.info("Trying manual ChromeDriver download...")
-                if chrome_version:
-                    major_version = chrome_version.split('.')[0]
-                    self.download_chromedriver(major_version)
-                    
-                    manual_path = '/tmp/chromedriver'
-                    if os.path.exists(manual_path):
-                        os.chmod(manual_path, 0o755)
-                        service = Service(manual_path)
-                        self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                        self.logger.info("Successfully using manually downloaded ChromeDriver")
-                        return True
-                        
-            except Exception as e:
-                self.logger.error(f"Manual download failed: {e}")
-            
-            raise Exception("All ChromeDriver initialization methods failed")
-            
-        except Exception as e:
-            self.logger.error(f"Error initializing browser: {e}")
-            return False
-    
-    def download_chromedriver(self, chrome_major_version):
-        """Manuel ChromeDriver download"""
-        try:
-            import requests
-            
-            # Chrome for Testing API kullan
-            api_url = f"https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_{chrome_major_version}"
-            response = requests.get(api_url)
-            
-            if response.status_code == 200:
-                version = response.text.strip()
-                download_url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/linux64/chromedriver-linux64.zip"
-                
-                self.logger.info(f"Downloading ChromeDriver {version} from {download_url}")
-                
-                # Download ve extract
-                import zipfile
-                import io
-                
-                zip_response = requests.get(download_url)
-                if zip_response.status_code == 200:
-                    with zipfile.ZipFile(io.BytesIO(zip_response.content)) as zip_file:
-                        # chromedriver dosyasını bul ve extract et
-                        for file_info in zip_file.filelist:
-                            if file_info.filename.endswith('chromedriver'):
-                                with zip_file.open(file_info) as source:
-                                    with open('/tmp/chromedriver', 'wb') as target:
-                                        target.write(source.read())
-                                self.logger.info("ChromeDriver downloaded successfully")
-                                return True
-                                
-        except Exception as e:
-            self.logger.error(f"Error downloading ChromeDriver: {e}")
-            return False
-    
-    def login(self):
-        """Twitter'a giriş yap"""
-        if not self.driver:
-            if not self.initialize():
+                self.logger.error(f"webdriver_manager ChromeDriver kurulumunda hata: {e}")
+                self.send_email(subject="ChromeDriver Hatası", body=f"webdriver_manager ile ChromeDriver kurulurken bir hata oluştu: {e}")
                 return False
-        
+        except Exception as e:
+            self.logger.error(f"Tarayıcı başlatılırken bir hata oluştu: {e}")
+            self.send_email(subject="Tarayıcı Başlatma Hatası", body=f"Tarayıcı başlatılırken bir hata oluştu: {e}")
+            return False
+        finally:
+            if self.driver:
+                self.is_initialized = True
+            else:
+                self.is_initialized = False
+
+    def close(self):
+        """Tarayıcıyı kapatır."""
+        if self.driver:
+            try:
+                self.driver.quit()
+                self.logger.info("Tarayıcı başarıyla kapatıldı.")
+            except Exception as e:
+                self.logger.error(f"Tarayıcı kapatılırken bir hata oluştu: {e}")
+        else:
+            self.logger.warning("Kapatılacak bir tarayıcı örneği bulunamadı.")
+
+    def navigate(self, url):
+        """Belirtilen URL'ye gider."""
+        if not self.is_initialized:
+            self.logger.error("Tarayıcı başlatılmamış. Lütfen önce initialize() fonksiyonunu çağırın.")
+            return False
         try:
-            # Önce çerezleri kontrol et
-            if self.load_cookies():
-                self.logger.info("Cookies loaded, checking session")
-                self.driver.get("https://twitter.com/home")
-                time.sleep(5)
-                
-                # Oturum açık mı kontrol et
-                if self.is_logged_in_check():
-                    self.logger.info("Logged in using cookies")
-                    self.is_logged_in = True
-                    return True
-            
-            # Çerezler çalışmadıysa normal giriş yap
-            self.logger.info("Performing normal login")
-            self.driver.get("https://twitter.com/i/flow/login")
-            time.sleep(3)
-            
-            # Email/kullanıcı adı giriş alanı
-            email_field = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[autocomplete='username']"))
+            self.driver.get(url)
+            self.logger.info(f"Navigated to {url}")
+            return True
+        except Exception as e:
+            self.logger.error(f"URL'ye giderken bir hata oluştu: {e}")
+            self.send_email(subject="Navigasyon Hatası", body=f"{url} adresine giderken bir hata oluştu: {e}")
+            return False
+
+    def login(self):
+        """Twitter'a giriş yapar."""
+        if not self.is_initialized:
+            self.logger.error("Tarayıcı başlatılmamış. Lütfen önce initialize() fonksiyonunu çağırın.")
+            return False
+
+        if not self.twitter_username or not self.twitter_password:
+            self.logger.error("Twitter kullanıcı adı veya şifresi tanımlanmamış.")
+            self.send_email(subject="Giriş Hatası", body="Twitter kullanıcı adı veya şifresi tanımlanmamış.")
+            return False
+
+        try:
+            # Giriş sayfasına git
+            self.navigate("https://twitter.com/i/flow/login")
+
+            # Kullanıcı adı alanını bul ve kullanıcı adını gir
+            username_input = WebDriverWait(self.driver, self.wait_time).until(
+                EC.presence_of_element_located((By.NAME, "text"))
             )
-            email_field.send_keys(os.environ.get('EMAIL_USER'))
-            
-            # İleri butonu
-            next_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//span[text()='Next']"))
+            username_input.send_keys(self.twitter_username)
+
+            # İleri butonunu bul ve tıkla
+            next_button = WebDriverWait(self.driver, self.wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, "//div[@role='button' and @data-testid='ocfEnterTextNextButton']"))
             )
             next_button.click()
-            time.sleep(2)
-            
-            # Kullanıcı adı doğrulama ekranı gelebilir
-            try:
-                username_verify = WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[data-testid='ocfEnterTextTextInput']"))
-                )
-                username_verify.send_keys(os.environ.get('TWITTER_USERNAME'))
-                
-                next_button = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.XPATH, "//span[text()='Next']"))
-                )
-                next_button.click()
-                time.sleep(2)
-            except TimeoutException:
-                self.logger.info("Username verification screen skipped")
-            
-            # Şifre alanı
-            password_field = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='password']"))
+
+            # Şifre alanını bul ve şifreyi gir
+            password_input = WebDriverWait(self.driver, self.wait_time).until(
+                EC.presence_of_element_located((By.NAME, "password"))
             )
-            password_field.send_keys(os.environ.get('TWITTER_PASSWORD'))
-            
-            # Giriş butonu
-            login_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, "//span[text()='Log in']"))
+            password_input.send_keys(self.twitter_password)
+
+            # Giriş yap butonunu bul ve tıkla
+            login_button = WebDriverWait(self.driver, self.wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, "//div[@role='button' and @data-testid='LoginForm_Login_Button']"))
             )
             login_button.click()
-            time.sleep(5)
-            
-            # Giriş başarılı mı kontrol et
-            if self.is_logged_in_check():
-                self.logger.info("Successfully logged in to Twitter")
-                self.is_logged_in = True
-                self.save_cookies()
-                return True
-            else:
-                self.logger.error("Failed to log in to Twitter")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Error during Twitter login: {e}")
+
+            self.logger.info("Twitter'a başarıyla giriş yapıldı.")
+            return True
+
+        except TimeoutException:
+            self.logger.error("Giriş işlemi sırasında zaman aşımı hatası oluştu.")
+            self.send_email(subject="Giriş Hatası", body="Giriş işlemi sırasında zaman aşımı hatası oluştu.")
             return False
-    
-    def is_logged_in_check(self):
-        """Oturum açık mı kontrol et"""
+        except Exception as e:
+            self.logger.error(f"Giriş yapılırken bir hata oluştu: {e}")
+            self.send_email(subject="Giriş Hatası", body=f"Giriş yapılırken bir hata oluştu: {e}")
+            return False
+
+    def search_and_get_user_info(self, search_query, max_scrolls=5):
+        """Arama yapar ve kullanıcı bilgilerini alır."""
+        if not self.is_initialized:
+            self.logger.error("Tarayıcı başlatılmamış. Lütfen önce initialize() fonksiyonunu çağırın.")
+            return []
+
         try:
-            # Ana sayfa elementlerini kontrol et
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "a[data-testid='AppTabBar_Home_Link']"))
+            # Arama sayfasına git
+            search_url = f"https://twitter.com/search?q={search_query}&src=typed_query"
+            if not self.navigate(search_url):
+                return []
+
+            user_data = []
+            scrolls = 0
+            last_height = self.driver.execute_script("return document.body.scrollHeight")
+
+            while scrolls < max_scrolls:
+                # Kullanıcıları bul
+                users = self.driver.find_elements(By.XPATH, "//div[@data-testid='UserCell']")
+                for user in users:
+                    try:
+                        # Kullanıcı adını al
+                        username_element = user.find_element(By.XPATH, ".//a[starts-with(@href, '/')]")
+                        username = username_element.get_attribute("href").split('/')[-1]
+
+                        # Adı al
+                        name_element = user.find_element(By.XPATH, ".//div[@dir='auto'][1]")
+                        name = name_element.text
+
+                        user_data.append({"username": username, "name": name})
+                    except NoSuchElementException:
+                        self.logger.warning("Kullanıcı bilgisi alınırken bir eleman bulunamadı.")
+                        continue
+
+                # Sayfayı aşağı kaydır
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(self.scroll_pause_time)
+
+                # Yeni yüksekliği hesapla ve kaydırma işleminin bitip bitmediğini kontrol et
+                new_height = self.driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    break
+                last_height = new_height
+                scrolls += 1
+
+            self.logger.info(f"{search_query} araması için {len(user_data)} kullanıcı bulundu.")
+            return user_data
+
+        except Exception as e:
+            self.logger.error(f"Arama yapılırken veya kullanıcı bilgileri alınırken bir hata oluştu: {e}")
+            self.send_email(subject="Arama Hatası", body=f"Arama yapılırken veya kullanıcı bilgileri alınırken bir hata oluştu: {e}")
+            return []
+
+    def get_user_tweets(self, username, max_tweets=10):
+        """Belirli bir kullanıcının tweet'lerini alır."""
+        if not self.is_initialized:
+            self.logger.error("Tarayıcı başlatılmamış. Lütfen önce initialize() fonksiyonunu çağırın.")
+            return []
+
+        try:
+            # Kullanıcı profiline git
+            profile_url = f"https://twitter.com/{username}"
+            if not self.navigate(profile_url):
+                return []
+
+            tweets = []
+            tweet_count = 0
+            last_height = self.driver.execute_script("return document.body.scrollHeight")
+
+            while tweet_count < max_tweets:
+                # Tweet'leri bul
+                tweet_elements = self.driver.find_elements(By.XPATH, "//div[@data-testid='tweetText']")
+                for tweet_element in tweet_elements:
+                    try:
+                        tweet_text = tweet_element.text
+                        tweets.append(tweet_text)
+                        tweet_count += 1
+                        if tweet_count >= max_tweets:
+                            break
+                    except StaleElementReferenceException:
+                        self.logger.warning("Stale element reference hatası, tweet atlanıyor.")
+                        continue
+
+                if tweet_count >= max_tweets:
+                    break
+
+                # Sayfayı aşağı kaydır
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(self.scroll_pause_time)
+
+                # Yeni yüksekliği hesapla ve kaydırma işleminin bitip bitmediğini kontrol et
+                new_height = self.driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    break
+                last_height = new_height
+
+            self.logger.info(f"{username} kullanıcısından {len(tweets)} tweet alındı.")
+            return tweets
+
+        except Exception as e:
+            self.logger.error(f"Tweet'ler alınırken bir hata oluştu: {e}")
+            self.send_email(subject="Tweet Alma Hatası", body=f"Tweet'ler alınırken bir hata oluştu: {e}")
+            return []
+
+    def like_tweet(self, tweet_url):
+        """Belirtilen tweet'i beğenir."""
+        if not self.is_initialized:
+            self.logger.error("Tarayıcı başlatılmamış. Lütfen önce initialize() fonksiyonunu çağırın.")
+            return False
+
+        try:
+            if not self.navigate(tweet_url):
+                return False
+
+            # Beğenme butonunu bul ve tıkla
+            like_button = WebDriverWait(self.driver, self.wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, "//div[@data-testid='like']"))
             )
+            like_button.click()
+
+            self.logger.info(f"{tweet_url} beğenildi.")
             return True
-        except:
+
+        except TimeoutException:
+            self.logger.error("Beğenme işlemi sırasında zaman aşımı hatası oluştu.")
+            self.send_email(subject="Beğenme Hatası", body="Beğenme işlemi sırasında zaman aşımı hatası oluştu.")
             return False
-    
-    def save_cookies(self):
-        """Çerezleri kaydet"""
-        try:
-            os.makedirs('data', exist_ok=True)
-            pickle.dump(self.driver.get_cookies(), open(self.cookies_file, "wb"))
-            self.logger.info("Cookies saved")
-            return True
+        except ElementClickInterceptedException as e:
+             self.logger.error(f"ElementClickInterceptedException: {e}. Reklam veya başka bir öğe tıklamayı engelliyor olabilir.")
+             return False
         except Exception as e:
-            self.logger.error(f"Error saving cookies: {e}")
+            self.logger.error(f"Tweet beğenilirken bir hata oluştu: {e}")
+            self.send_email(subject="Beğenme Hatası", body=f"Tweet beğenilirken bir hata oluştu: {e}")
             return False
-    
-    def load_cookies(self):
-        """Çerezleri yükle"""
+
+    def retweet(self, tweet_url):
+        """Belirtilen tweet'i retweet yapar."""
+        if not self.is_initialized:
+            self.logger.error("Tarayıcı başlatılmamış. Lütfen önce initialize() fonksiyonunu çağırın.")
+            return False
+
         try:
-            if os.path.exists(self.cookies_file):
-                self.driver.get("https://twitter.com")
-                cookies = pickle.load(open(self.cookies_file, "rb"))
-                for cookie in cookies:
-                    self.driver.add_cookie(cookie)
-                self.logger.info("Cookies loaded")
-                return True
-            return False
-        except Exception as e:
-            self.logger.error(f"Error loading cookies: {e}")
-            return False
-    
-    def post_tweet(self, content):
-        """Tweet gönder"""
-        if not self.is_logged_in:
-            if not self.login():
+            if not self.navigate(tweet_url):
                 return False
-        
+
+            # Retweet butonunu bul ve tıkla
+            retweet_button = WebDriverWait(self.driver, self.wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, "//div[@data-testid='retweet']"))
+            )
+            retweet_button.click()
+
+            # Retweet'i onayla (gerekirse)
+            confirm_retweet_button = WebDriverWait(self.driver, self.short_wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, "//div[@data-testid='retweetConfirm']"))
+            )
+            confirm_retweet_button.click()
+
+            self.logger.info(f"{tweet_url} retweet yapıldı.")
+            return True
+
+        except TimeoutException:
+            self.logger.error("Retweet işlemi sırasında zaman aşımı hatası oluştu.")
+            self.send_email(subject="Retweet Hatası", body="Retweet işlemi sırasında zaman aşımı hatası oluştu.")
+            return False
+        except ElementClickInterceptedException as e:
+             self.logger.error(f"ElementClickInterceptedException: {e}. Reklam veya başka bir öğe tıklamayı engelliyor olabilir.")
+             return False
+        except Exception as e:
+            self.logger.error(f"Tweet retweet yapılırken bir hata oluştu: {e}")
+            self.send_email(subject="Retweet Hatası", body=f"Tweet retweet yapılırken bir hata oluştu: {e}")
+            return False
+
+    def follow_user(self, username):
+        """Belirtilen kullanıcıyı takip eder."""
+        if not self.is_initialized:
+            self.logger.error("Tarayıcı başlatılmamış. Lütfen önce initialize() fonksiyonunu çağırın.")
+            return False
+
         try:
-            # Ana sayfaya git
-            self.driver.get("https://twitter.com/home")
-            time.sleep(3)
-            
-            # Tweet oluştur butonuna tıkla
-            tweet_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "a[data-testid='SideNav_NewTweet_Button']"))
+            # Kullanıcı profiline git
+            profile_url = f"https://twitter.com/{username}"
+            if not self.navigate(profile_url):
+                return False
+
+            # Takip et butonunu bul ve tıkla
+            follow_button = WebDriverWait(self.driver, self.wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, "//div[@data-testid='placementTracking']//div[@role='button'][span/span/div/text()='Takip Et' or span/div/text()='Follow']"))
+            )
+            follow_button.click()
+
+            self.logger.info(f"{username} takip edildi.")
+            return True
+
+        except TimeoutException:
+            self.logger.error("Takip etme işlemi sırasında zaman aşımı hatası oluştu.")
+            self.send_email(subject="Takip Etme Hatası", body="Takip etme işlemi sırasında zaman aşımı hatası oluştu.")
+            return False
+        except ElementClickInterceptedException as e:
+             self.logger.error(f"ElementClickInterceptedException: {e}. Reklam veya başka bir öğe tıklamayı engelliyor olabilir.")
+             return False
+        except Exception as e:
+            self.logger.error(f"Kullanıcı takip edilirken bir hata oluştu: {e}")
+            self.send_email(subject="Takip Etme Hatası", body=f"Kullanıcı takip edilirken bir hata oluştu: {e}")
+            return False
+
+    def send_tweet(self, message):
+        """Yeni bir tweet gönderir."""
+        if not self.is_initialized:
+            self.logger.error("Tarayıcı başlatılmamış. Lütfen önce initialize() fonksiyonunu çağırın.")
+            return False
+
+        try:
+            # Tweet oluşturma butonunu bul ve tıkla
+            tweet_button = WebDriverWait(self.driver, self.wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, "//a[@aria-label='Tweet'][@role='link']"))
             )
             tweet_button.click()
-            time.sleep(2)
-            
-            # Tweet içeriğini yaz
-            tweet_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-testid='tweetTextarea_0']"))
+
+            # Tweet metin alanını bul ve mesajı gir
+            tweet_text_area = WebDriverWait(self.driver, self.wait_time).until(
+                EC.presence_of_element_located((By.XPATH, "//div[@role='textbox'][@aria-label='Tweet text']"))
             )
-            tweet_input.send_keys(content)
-            time.sleep(1)
-            
-            # Tweet gönder butonuna tıkla
-            post_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='tweetButton']"))
+            tweet_text_area.send_keys(message)
+
+            # Tweet gönderme butonunu bul ve tıkla
+            send_tweet_button = WebDriverWait(self.driver, self.wait_time).until(
+                EC.element_to_be_clickable((By.XPATH, "//div[@data-testid='tweetButtonInline']"))
             )
-            post_button.click()
-            time.sleep(3)
-            
-            self.logger.info("Tweet posted successfully")
+            send_tweet_button.click()
+
+            self.logger.info("Tweet gönderildi.")
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Error posting tweet: {e}")
+
+        except TimeoutException:
+            self.logger.error("Tweet gönderme işlemi sırasında zaman aşımı hatası oluştu.")
+            self.send_email(subject="Tweet Gönderme Hatası", body="Tweet gönderme işlemi sırasında zaman aşımı hatası oluştu.")
             return False
-    
-    def reply_to_tweet(self, tweet_url, reply_content):
-        """Tweet'e yanıt ver"""
-        if not self.is_logged_in:
-            if not self.login():
-                return False
-        
+        except Exception as e:
+            self.logger.error(f"Tweet gönderilirken bir hata oluştu: {e}")
+            self.send_email(subject="Tweet Gönderme Hatası", body=f"Tweet gönderilirken bir hata oluştu: {e}")
+            return False
+
+    def send_email(self, subject, body):
+        """E-posta gönderir."""
+        if not self.email_sender or not self.email_password or not self.email_receiver:
+            self.logger.error("E-posta gönderme bilgileri eksik.")
+            return False
+
         try:
-            # Tweet sayfasına git
-            self.driver.get(tweet_url)
-            time.sleep(5)
-            
-            # Yanıt butonuna tıkla
-            reply_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='reply']"))
-            )
-            reply_button.click()
-            time.sleep(2)
-            
-            # Yanıt içeriğini yaz
-            reply_input = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-testid='tweetTextarea_0']"))
-            )
-            reply_input.send_keys(reply_content)
-            time.sleep(1)
-            
-            # Yanıt gönder butonuna tıkla
-            reply_post_button = WebDriverWait(self.driver, 10).until(
-                EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='tweetButton']"))
-            )
-            reply_post_button.click()
-            time.sleep(3)
-            
-            self.logger.info(f"Reply posted successfully: {tweet_url}")
+            message = MIMEMultipart()
+            message['From'] = self.email_sender
+            message['To'] = self.email_receiver
+            message['Subject'] = subject
+
+            message.attach(MIMEText(body, 'plain'))
+
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as server:
+                server.login(self.email_sender, self.email_password)
+                server.sendmail(self.email_sender, self.email_receiver, message.as_string())
+
+            self.logger.info("E-posta gönderildi.")
             return True
-            
+
         except Exception as e:
-            self.logger.error(f"Error posting reply: {e}")
+            self.logger.error(f"E-posta gönderilirken bir hata oluştu: {e}")
             return False
-    
-    def follow_user(self, username):
-        """Kullanıcıyı takip et"""
-        if not self.is_logged_in:
-            if not self.login():
-                return False
-        
-        try:
-            # Kullanıcı profiline git
-            self.driver.get(f"https://twitter.com/{username}")
-            time.sleep(3)
-            
-            # Takip et butonunu bul
-            try:
-                follow_button = WebDriverWait(self.driver, 5).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='follow']"))
-                )
-                follow_button.click()
-                time.sleep(2)
-                self.logger.info(f"@{username} followed")
-                return True
-            except TimeoutException:
-                self.logger.info(f"@{username} already followed or button not found")
-                return True
-                
-        except Exception as e:
-            self.logger.error(f"Error following @{username}: {e}")
-            return False
-    
-    def get_latest_tweet(self, username):
-        """Kullanıcının son tweet'ini al"""
-        if not self.is_logged_in:
-            if not self.login():
-                return None
-        
-        try:
-            # Kullanıcı profiline git
-            self.driver.get(f"https://twitter.com/{username}")
-            time.sleep(5)
-            
-            # İlk tweet'i bul
-            tweet_elements = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "article[data-testid='tweet']"))
-            )
-            
-            if not tweet_elements:
-                self.logger.warning(f"No tweets found for @{username}")
-                return None
-            
-            # İlk tweet'i seç
-            first_tweet = tweet_elements[0]
-            
-            # Tweet metnini al
-            tweet_text_element = first_tweet.find_element(By.CSS_SELECTOR, "div[data-testid='tweetText']")
-            tweet_text = tweet_text_element.text
-            
-            # Tweet tarihini al
-            time_element = first_tweet.find_element(By.CSS_SELECTOR, "time")
-            tweet_time = time_element.get_attribute("datetime")
-            
-            # Tweet URL'sini al
-            tweet_link = first_tweet.find_element(By.CSS_SELECTOR, "a[href*='/status/']")
-            tweet_url = tweet_link.get_attribute("href")
-            
-            tweet_data = {
-                'text': tweet_text,
-                'time': tweet_time,
-                'url': tweet_url,
-                'username': username
-            }
-            
-            self.logger.info(f"Latest tweet retrieved for @{username}")
-            return tweet_data
-            
-        except Exception as e:
-            self.logger.error(f"Error getting latest tweet for @{username}: {e}")
-            return None
-    
-    def close(self):
-        """Tarayıcıyı kapat"""
-        if self.driver:
-            self.driver.quit()
-            self.logger.info("Browser closed")
