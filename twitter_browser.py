@@ -572,14 +572,14 @@ class TwitterBrowser:
                         if text_element:
                             tweet_text = await text_element.inner_text()
                             break
-                except:
-                    continue
+                    except:
+                        continue
             
-            tweet_data['text'] = tweet_text
+                tweet_data['text'] = tweet_text
             
-        except Exception as e:
-            self.logger.warning(f"⚠️ Could not get tweet text: {e}")
-            tweet_data['text'] = "No text"
+            except Exception as e:
+                self.logger.warning(f"⚠️ Could not get tweet text: {e}")
+                tweet_data['text'] = "No text"
         
             # Tweet zamanı
             try:
@@ -596,14 +596,14 @@ class TwitterBrowser:
                         if time_element:
                             tweet_time = await time_element.get_attribute("datetime")
                             break
-                except:
-                    continue
+                    except:
+                        continue
             
-            tweet_data['time'] = tweet_time
+                tweet_data['time'] = tweet_time
             
-        except Exception as e:
-            self.logger.warning(f"⚠️ Could not get tweet time: {e}")
-            tweet_data['time'] = None
+            except Exception as e:
+                self.logger.warning(f"⚠️ Could not get tweet time: {e}")
+                tweet_data['time'] = None
         
             # Tweet URL'i
             try:
@@ -621,27 +621,27 @@ class TwitterBrowser:
                             if tweet_url and not tweet_url.startswith("https://"):
                                 tweet_url = f"https://twitter.com{tweet_url}"
                             break
-                except:
-                    continue
+                    except:
+                        continue
             
-            tweet_data['url'] = tweet_url
+                tweet_data['url'] = tweet_url
             
+            except Exception as e:
+                self.logger.warning(f"⚠️ Could not get tweet URL: {e}")
+                tweet_data['url'] = None
+        
+            tweet_data['username'] = username
+        
+            self.logger.info(f"✅ Tweet data retrieved for @{username}")
+            self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
+            self.logger.info(f"🕐 Time: {tweet_data['time']}")
+            self.logger.info(f"🔗 URL: {tweet_data['url']}")
+        
+            return tweet_data
+        
         except Exception as e:
-            self.logger.warning(f"⚠️ Could not get tweet URL: {e}")
-            tweet_data['url'] = None
-        
-        tweet_data['username'] = username
-        
-        self.logger.info(f"✅ Tweet data retrieved for @{username}")
-        self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
-        self.logger.info(f"🕐 Time: {tweet_data['time']}")
-        self.logger.info(f"🔗 URL: {tweet_data['url']}")
-        
-        return tweet_data
-        
-    except Exception as e:
-        self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
-        return None
+            self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
+            return None
     
     async def close(self):
         """Browser'ı kapat"""
