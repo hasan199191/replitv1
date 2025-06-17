@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: twitter-bot
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    branch: main
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: TWITTER_USERNAME
+        sync: false
+      - key: TWITTER_PASSWORD
+        sync: false
+      - key: IS_RENDER
+        value: "true"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    buildCommand: echo "Building with Docker"
+    startCommand: echo "Starting with Docker CMD"

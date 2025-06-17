@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  twitter-bot:
+    build: .
+    container_name: twitter-bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
