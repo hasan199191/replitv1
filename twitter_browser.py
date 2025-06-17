@@ -1,14 +1,17 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 import time
 import os
 import pickle
 import logging
 import random
+import subprocess
 
 class TwitterBrowser:
     def __init__(self):
@@ -27,6 +30,44 @@ class TwitterBrowser:
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
     
+    def get_chrome_version(self):
+        """Chrome versiyonunu al"""
+        try:
+            result = subprocess.run(['google-chrome', '--version'], 
+                                  capture_output=True, text=True)
+            version = result.stdout.strip().split()[-1]
+            self.logger.info(f"Chrome version detected: {version}")
+            return version
+        except Exception as e:
+            self.logger.error(f"Error getting Chrome version: {e}")
+            return None
+    
+    def fix_chromedriver_path(self, driver_path):
+        """webdriver-manager'ın yanlış path sorununu çöz"""
+        try:
+            # webdriver-manager bazen yanlış dosyayı işaret ediyor
+            if 'THIRD_PARTY_NOTICES' in driver_path:
+                # Doğru chromedriver dosyasını bul
+                driver_dir = os.path.dirname(driver_path)
+                for file in os.listdir(driver_dir):
+                    if file == 'chromedriver' or file == 'chromedriver.exe':
+                        correct_path = os.path.join(driver_dir, file)
+                        self.logger.info(f"Fixed ChromeDriver path: {correct_path}")
+                        return correct_path
+                
+                # chromedriver-linux64 klasörünü kontrol et
+                linux64_dir = os.path.join(driver_dir, 'chromedriver-linux64')
+                if os.path.exists(linux64_dir):
+                    chromedriver_path = os.path.join(linux64_dir, 'chromedriver')
+                    if os.path.exists(chromedriver_path):
+                        self.logger.info(f"Found ChromeDriver in linux64 dir: {chromedriver_path}")
+                        return chromedriver_path
+            
+            return driver_path
+        except Exception as e:
+            self.logger.error(f"Error fixing ChromeDriver path: {e}")
+            return driver_path
+    
     def initialize(self):
         """Tarayıcıyı başlat"""
         try:
@@ -42,39 +83,134 @@ class TwitterBrowser:
             chrome_options.add_argument("--disable-infobars")
             chrome_options.add_argument("--mute-audio")
             chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
+            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
             
             # Render.com için özel ayarlar
             if os.environ.get('IS_RENDER'):
+                chrome_options.add_argument("--disable-background-timer-throttling")
+                chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+                chrome_options.add_argument("--disable-renderer-backgrounding")
+                chrome_options.add_argument("--disable-features=TranslateUI")
+                chrome_options.add_argument("--disable-ipc-flooding-protection")
                 chrome_options.binary_location = "/usr/bin/google-chrome"
             
-            self.driver = webdriver.Chrome(options=chrome_options)
-            self.logger.info("Tarayıcı başlatıldı")
-            return True
+            # Chrome versiyonunu kontrol et
+            chrome_version = self.get_chrome_version()
+            
+            # ChromeDriver service oluştur
+            service = None
+            
+            # 1. Önce sistem ChromeDriver'ını dene
+            if os.path.exists('/usr/bin/chromedriver'):
+                try:
+                    service = Service('/usr/bin/chromedriver')
+                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                    self.logger.info("Successfully using system ChromeDriver")
+                    return True
+                except Exception as e:
+                    self.logger.warning(f"System ChromeDriver failed: {e}")
+            
+            # 2. webdriver-manager ile dene
+            try:
+                self.logger.info("Trying webdriver-manager...")
+                driver_path = ChromeDriverManager().install()
+                
+                # Path'i düzelt
+                fixed_path = self.fix_chromedriver_path(driver_path)
+                
+                # Dosyanın executable olduğundan emin ol
+                if os.path.exists(fixed_path):
+                    os.chmod(fixed_path, 0o755)
+                    service = Service(fixed_path)
+                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                    self.logger.info(f"Successfully using webdriver-manager ChromeDriver: {fixed_path}")
+                    return True
+                else:
+                    self.logger.error(f"ChromeDriver not found at: {fixed_path}")
+                    
+            except Exception as e:
+                self.logger.error(f"webdriver-manager failed: {e}")
+            
+            # 3. Manuel download dene
+            try:
+                self.logger.info("Trying manual ChromeDriver download...")
+                if chrome_version:
+                    major_version = chrome_version.split('.')[0]
+                    self.download_chromedriver(major_version)
+                    
+                    manual_path = '/tmp/chromedriver'
+                    if os.path.exists(manual_path):
+                        os.chmod(manual_path, 0o755)
+                        service = Service(manual_path)
+                        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                        self.logger.info("Successfully using manually downloaded ChromeDriver")
+                        return True
+                        
+            except Exception as e:
+                self.logger.error(f"Manual download failed: {e}")
+            
+            raise Exception("All ChromeDriver initialization methods failed")
+            
         except Exception as e:
-            self.logger.error(f"Tarayıcı başlatılırken hata: {e}")
+            self.logger.error(f"Error initializing browser: {e}")
+            return False
+    
+    def download_chromedriver(self, chrome_major_version):
+        """Manuel ChromeDriver download"""
+        try:
+            import requests
+            
+            # Chrome for Testing API kullan
+            api_url = f"https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_{chrome_major_version}"
+            response = requests.get(api_url)
+            
+            if response.status_code == 200:
+                version = response.text.strip()
+                download_url = f"https://storage.googleapis.com/chrome-for-testing-public/{version}/linux64/chromedriver-linux64.zip"
+                
+                self.logger.info(f"Downloading ChromeDriver {version} from {download_url}")
+                
+                # Download ve extract
+                import zipfile
+                import io
+                
+                zip_response = requests.get(download_url)
+                if zip_response.status_code == 200:
+                    with zipfile.ZipFile(io.BytesIO(zip_response.content)) as zip_file:
+                        # chromedriver dosyasını bul ve extract et
+                        for file_info in zip_file.filelist:
+                            if file_info.filename.endswith('chromedriver'):
+                                with zip_file.open(file_info) as source:
+                                    with open('/tmp/chromedriver', 'wb') as target:
+                                        target.write(source.read())
+                                self.logger.info("ChromeDriver downloaded successfully")
+                                return True
+                                
+        except Exception as e:
+            self.logger.error(f"Error downloading ChromeDriver: {e}")
             return False
     
     def login(self):
         """Twitter'a giriş yap"""
         if not self.driver:
-            self.initialize()
+            if not self.initialize():
+                return False
         
         try:
             # Önce çerezleri kontrol et
             if self.load_cookies():
-                self.logger.info("Çerezler yüklendi, oturum kontrolü yapılıyor")
+                self.logger.info("Cookies loaded, checking session")
                 self.driver.get("https://twitter.com/home")
                 time.sleep(5)
                 
                 # Oturum açık mı kontrol et
                 if self.is_logged_in_check():
-                    self.logger.info("Çerezler ile oturum açıldı")
+                    self.logger.info("Logged in using cookies")
                     self.is_logged_in = True
                     return True
             
             # Çerezler çalışmadıysa normal giriş yap
-            self.logger.info("Normal giriş yapılıyor")
+            self.logger.info("Performing normal login")
             self.driver.get("https://twitter.com/i/flow/login")
             time.sleep(3)
             
@@ -104,7 +240,7 @@ class TwitterBrowser:
                 next_button.click()
                 time.sleep(2)
             except TimeoutException:
-                self.logger.info("Kullanıcı adı doğrulama ekranı atlandı")
+                self.logger.info("Username verification screen skipped")
             
             # Şifre alanı
             password_field = WebDriverWait(self.driver, 10).until(
@@ -121,16 +257,16 @@ class TwitterBrowser:
             
             # Giriş başarılı mı kontrol et
             if self.is_logged_in_check():
-                self.logger.info("Twitter'a başarıyla giriş yapıldı")
+                self.logger.info("Successfully logged in to Twitter")
                 self.is_logged_in = True
                 self.save_cookies()
                 return True
             else:
-                self.logger.error("Twitter'a giriş yapılamadı")
+                self.logger.error("Failed to log in to Twitter")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"Twitter'a giriş yapılırken hata: {e}")
+            self.logger.error(f"Error during Twitter login: {e}")
             return False
     
     def is_logged_in_check(self):
@@ -149,10 +285,10 @@ class TwitterBrowser:
         try:
             os.makedirs('data', exist_ok=True)
             pickle.dump(self.driver.get_cookies(), open(self.cookies_file, "wb"))
-            self.logger.info("Çerezler kaydedildi")
+            self.logger.info("Cookies saved")
             return True
         except Exception as e:
-            self.logger.error(f"Çerezler kaydedilirken hata: {e}")
+            self.logger.error(f"Error saving cookies: {e}")
             return False
     
     def load_cookies(self):
@@ -163,11 +299,11 @@ class TwitterBrowser:
                 cookies = pickle.load(open(self.cookies_file, "rb"))
                 for cookie in cookies:
                     self.driver.add_cookie(cookie)
-                self.logger.info("Çerezler yüklendi")
+                self.logger.info("Cookies loaded")
                 return True
             return False
         except Exception as e:
-            self.logger.error(f"Çerezler yüklenirken hata: {e}")
+            self.logger.error(f"Error loading cookies: {e}")
             return False
     
     def post_tweet(self, content):
@@ -202,11 +338,11 @@ class TwitterBrowser:
             post_button.click()
             time.sleep(3)
             
-            self.logger.info("Tweet başarıyla gönderildi")
+            self.logger.info("Tweet posted successfully")
             return True
             
         except Exception as e:
-            self.logger.error(f"Tweet gönderilirken hata: {e}")
+            self.logger.error(f"Error posting tweet: {e}")
             return False
     
     def reply_to_tweet(self, tweet_url, reply_content):
@@ -241,11 +377,11 @@ class TwitterBrowser:
             reply_post_button.click()
             time.sleep(3)
             
-            self.logger.info(f"Yanıt başarıyla gönderildi: {tweet_url}")
+            self.logger.info(f"Reply posted successfully: {tweet_url}")
             return True
             
         except Exception as e:
-            self.logger.error(f"Yanıt gönderilirken hata: {e}")
+            self.logger.error(f"Error posting reply: {e}")
             return False
     
     def follow_user(self, username):
@@ -266,14 +402,14 @@ class TwitterBrowser:
                 )
                 follow_button.click()
                 time.sleep(2)
-                self.logger.info(f"@{username} takip edildi")
+                self.logger.info(f"@{username} followed")
                 return True
             except TimeoutException:
-                self.logger.info(f"@{username} zaten takip ediliyor olabilir")
+                self.logger.info(f"@{username} already followed or button not found")
                 return True
                 
         except Exception as e:
-            self.logger.error(f"@{username} takip edilirken hata: {e}")
+            self.logger.error(f"Error following @{username}: {e}")
             return False
     
     def get_latest_tweet(self, username):
@@ -293,7 +429,7 @@ class TwitterBrowser:
             )
             
             if not tweet_elements:
-                self.logger.warning(f"@{username} için tweet bulunamadı")
+                self.logger.warning(f"No tweets found for @{username}")
                 return None
             
             # İlk tweet'i seç
@@ -318,15 +454,15 @@ class TwitterBrowser:
                 'username': username
             }
             
-            self.logger.info(f"@{username} son tweet'i alındı")
+            self.logger.info(f"Latest tweet retrieved for @{username}")
             return tweet_data
             
         except Exception as e:
-            self.logger.error(f"@{username} son tweet'i alınırken hata: {e}")
+            self.logger.error(f"Error getting latest tweet for @{username}: {e}")
             return None
     
     def close(self):
         """Tarayıcıyı kapat"""
         if self.driver:
             self.driver.quit()
-            self.logger.info("Tarayıcı kapatıldı")
+            self.logger.info("Browser closed")
