@@ -1,157 +1,183 @@
 import asyncio
-import time
 import logging
 import os
-import signal
 import sys
-from datetime import datetime, timedelta
+import time
+import json
 import random
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
 from twitter_browser import TwitterBrowser
 from advanced_content_generator import AdvancedContentGenerator
+from email_handler import EmailHandler
+import threading
 from health_server import start_health_server
 
-# Logging ayarları
+# Windows konsol kodlama sorununu çöz
+if sys.platform == "win32":
+    import codecs
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
+    sys.stderr = codecs.getwriter("utf-8")(sys.stderr.detach())
+
+# Load environment variables
+load_dotenv()
+
+# logs klasörünü oluştur (eğer yoksa)
+if not os.path.exists('logs'):
+    os.makedirs('logs')
+
+# Logging konfigürasyonu - UTF-8 encoding ile
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/bot.log'),
+        logging.FileHandler('logs/bot.log', encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
 
 class TwitterBot:
     def __init__(self):
-        self.twitter_browser = None
-        self.content_generator = AdvancedContentGenerator()
-        self.is_running = False
-        self.health_server = None
-        self.bot_initialized = False
         self.initialization_attempts = 0
         self.max_init_attempts = 3
         self.bot_start_time = datetime.now()
+        self.content_generator = AdvancedContentGenerator()
+        self.email_handler = EmailHandler()
+        self.browser = None
+        self.last_workflow_time = 0
+        self.workflow_interval = 1800  # 30 dakika
+        self.tasks_started = False
+        
+        # Health server'ı başlat
+        if os.environ.get('IS_RENDER'):
+            start_health_server()
+            logging.info("🏥 Health server started for Render.com")
+        
+        # Veri listelerini yükle
+        self.load_data()
+        
+    def load_data(self):
+        """Proje ve hesap listelerini yükle"""
+        self.projects = [
+            {"name": "Allora", "twitter": "@AlloraNetwork", "website": "allora.network", "category": "AI + Blockchain"},
+            {"name": "Caldera", "twitter": "@Calderaxyz", "website": "caldera.xyz", "category": "Rollup Infrastructure"},
+            {"name": "Camp Network", "twitter": "@campnetworkxyz", "website": "campnetwork.xyz", "category": "Social Layer"},
+            {"name": "Eclipse", "twitter": "@EclipseFND", "website": "eclipse.builders", "category": "SVM L2"},
+            {"name": "Fogo", "twitter": "@FogoChain", "website": "fogo.io", "category": "Gaming Chain"},
+            {"name": "Humanity Protocol", "twitter": "@Humanityprot", "website": "humanity.org", "category": "Identity"},
+            {"name": "Hyperbolic", "twitter": "@hyperbolic_labs", "website": "hyperbolic.xyz", "category": "AI Infrastructure"},
+            {"name": "Infinex", "twitter": "@infinex", "website": "infinex.xyz", "category": "DeFi Frontend"},
+            {"name": "Irys", "twitter": "@irys_xyz", "website": "irys.xyz", "category": "Data Storage"},
+            {"name": "Katana", "twitter": "@KatanaRIPNet", "website": "katana.network", "category": "Gaming Infrastructure"},
+            {"name": "Lombard", "twitter": "@Lombard_Finance", "website": "lombard.finance", "category": "Bitcoin DeFi"},
+            {"name": "MegaETH", "twitter": "@megaeth_labs", "website": "megaeth.com", "category": "High-Performance L2"},
+            {"name": "Mira Network", "twitter": "@mira_network", "website": "mira.network", "category": "Cross-Chain"},
+            {"name": "Mitosis", "twitter": "@MitosisOrg", "website": "mitosis.org", "category": "Ecosystem Expansion"},
+            {"name": "Monad", "twitter": "@monad_xyz", "website": "monad.xyz", "category": "Parallel EVM"},
+            {"name": "Multibank", "twitter": "@multibank_io", "website": "multibank.io", "category": "Multi-Chain Banking"},
+            {"name": "Multipli", "twitter": "@multiplifi", "website": "multipli.fi", "category": "Yield Optimization"},
+            {"name": "Newton", "twitter": "@MagicNewton", "website": "newton.xyz", "category": "Cross-Chain Liquidity"},
+            {"name": "Novastro", "twitter": "@Novastro_xyz", "website": "novastro.xyz", "category": "Cosmos DeFi"},
+            {"name": "Noya.ai", "twitter": "@NetworkNoya", "website": "noya.ai", "category": "AI-Powered DeFi"},
+            {"name": "OpenLedger", "twitter": "@OpenledgerHQ", "website": "openledger.xyz", "category": "Institutional DeFi"},
+            {"name": "PARADEX", "twitter": "@tradeparadex", "website": "paradex.trade", "category": "Perpetuals DEX"},
+            {"name": "Portal to BTC", "twitter": "@PortaltoBitcoin", "website": "portaltobitcoin.com", "category": "Bitcoin Bridge"},
+            {"name": "Puffpaw", "twitter": "@puffpaw_xyz", "website": "puffpaw.xyz", "category": "Gaming + NFT"},
+            {"name": "SatLayer", "twitter": "@satlayer", "website": "satlayer.xyz", "category": "Bitcoin L2"},
+            {"name": "Sidekick", "twitter": "@Sidekick_Labs", "website": "N/A", "category": "Developer Tools"},
+            {"name": "Somnia", "twitter": "@Somnia_Network", "website": "somnia.network", "category": "Virtual Society"},
+            {"name": "Soul Protocol", "twitter": "@DigitalSoulPro", "website": "digitalsoulprotocol.com", "category": "Digital Identity"},
+            {"name": "Succinct", "twitter": "@succinctlabs", "website": "succinct.xyz", "category": "Zero-Knowledge"},
+            {"name": "Symphony", "twitter": "@SymphonyFinance", "website": "app.symphony.finance", "category": "Yield Farming"},
+            {"name": "Theoriq", "twitter": "@theoriq_ai", "website": "theoriq.ai", "category": "AI Agents"},
+            {"name": "Thrive Protocol", "twitter": "@thriveprotocol", "website": "thriveprotocol.com", "category": "Social DeFi"},
+            {"name": "Union", "twitter": "@union_build", "website": "union.build", "category": "Cross-Chain Infrastructure"},
+            {"name": "YEET", "twitter": "@yeet", "website": "yeet.com", "category": "Meme + Utility"}
+        ]
+        
+        self.monitored_accounts = [
+            "0x_ultra", "0xBreadguy", "beast_ico", "mdudas", "lex_node", 
+            "jessepollak", "0xWenMoon", "ThinkingUSD", "udiWertheimer", 
+            "vohvohh", "NTmoney", "0xMert_", "QwQiao", "DefiIgnas", 
+            "notthreadguy", "Chilearmy123", "Punk9277", "DeeZe", "stevenyuntcap",
+            "chefcryptoz", "ViktorBunin", "ayyyeandy", "andy8052", "Phineas_Sol",
+            "MoonOverlord", "NarwhalTan", "theunipcs", "RyanWatkins_", 
+            "aixbt_agent", "ai_9684xtpa", "icebergy_", "Luyaoyuan1", 
+            "stacy_muur", "TheOneandOmsy", "jeffthedunker", "JoshuaDeuk", 
+            "0x_scientist", "inversebrah", "dachshundwizard", "gammichan",
+            "sandeepnailwal", "segall_max", "blknoiz06", "0xmons", "hosseeb",
+            "GwartyGwart", "JasonYanowitz", "Tyler_Did_It", "laurashin",
+            "Dogetoshi", "benbybit", "MacroCRG", "Melt_Dem"
+        ]
+        
+        logging.info(f"Data loaded: {len(self.projects)} projects, {len(self.monitored_accounts)} accounts")
+        return True
         
     async def initialize(self):
-        """Bot'u başlat ve Twitter'a giriş yap"""
-        try:
-            self.initialization_attempts += 1
-            logging.info(f"🤖 Initializing Twitter Bot (Attempt {self.initialization_attempts}/{self.max_init_attempts})...")
-            
-            # Bot başlangıç zamanını kaydet
-            self.bot_start_time = datetime.now()
-            logging.info(f"🕐 Bot start time: {self.bot_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-            
-            # Health server'ı başlat (Render için gerekli)
-            if os.environ.get('IS_RENDER'):
-                self.health_server = start_health_server()
-                logging.info("🏥 Health server started for Render.com")
-            
-            # İçerik üreticisini başlat
-            await self.content_generator.initialize()
-            logging.info("🧠 Content generator initialized")
-            
-            # Twitter tarayıcısını başlat (Playwright)
-            self.twitter_browser = TwitterBrowser()
-            if not await self.twitter_browser.initialize():
-                raise Exception("Twitter browser could not be initialized")
-            
-            # Twitter'a giriş yap - SADECE GEREKTİĞINDE
-            login_success = await self.twitter_browser.quick_login_check()
-            if not login_success:
-                logging.info("🔐 Login required, attempting to login...")
-                login_success = await self.twitter_browser.login()
-            
-            if not login_success:
-                if self.initialization_attempts < self.max_init_attempts:
-                    logging.warning(f"⚠️ Login failed, waiting 5 minutes before retry...")
-                    await asyncio.sleep(300)  # 5 dakika bekle
-                    return await self.initialize()  # Recursive retry
-                else:
-                    raise Exception("Could not login to Twitter after multiple attempts")
-            
-            self.bot_initialized = True
-            logging.info("🎉 Bot successfully initialized!")
-            logging.info("📱 Session management active - minimal login attempts!")
-            
-            return True
-            
-        except Exception as e:
-            logging.error(f"❌ Error initializing bot: {e}")
-            if self.initialization_attempts < self.max_init_attempts:
-                logging.info(f"🔄 Retrying initialization in 10 minutes...")
-                await asyncio.sleep(600)  # 10 dakika bekle
-                return await self.initialize()
+        self.initialization_attempts += 1
+        logging.info(f"🤖 Initializing Twitter Bot (Attempt {self.initialization_attempts}/{self.max_init_attempts})...")
+        logging.info(f"🕐 Bot start time: {self.bot_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Initialize content generator
+        if not await self.content_generator.initialize():
             return False
-    
-    async def complete_workflow(self):
-        """KOMPLE WORKFLOW - 2 Görev: Proje Paylaşımı + Reply Kontrolü"""
-        try:
-            workflow_start_time = datetime.now()
-            logging.info("🔄 Starting COMPLETE workflow...")
-            logging.info(f"🕐 Workflow start time: {workflow_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+        logging.info("🧠 Content generator initialized")
         
-            # Session durumunu kontrol et
-            if not await self.twitter_browser.quick_login_check():
-                logging.warning("⚠️ Session lost, attempting to restore...")
-                if not await self.twitter_browser.login():
-                    logging.error("❌ Could not restore session, skipping this cycle")
-                    return
+        # Gmail App Password kontrolü
+        gmail_password = os.environ.get('GMAIL_APP_PASSWORD')
+        if gmail_password:
+            logging.info(f"🔐 Using Gmail App Password (length: {len(gmail_password)})")
+        else:
+            logging.warning("⚠️ No Gmail App Password found")
         
-            # GÖREV 1: 2 Web3 projesi seç ve paylaş
-            logging.info("📋 TASK 1: Posting Web3 project content...")
-            task1_start = datetime.now()
-            await self.post_project_content()
-            task1_duration = (datetime.now() - task1_start).total_seconds()
-            logging.info(f"✅ TASK 1 completed in {task1_duration:.1f} seconds")
+        # Initialize browser
+        self.browser = TwitterBrowser()
         
-            # Görevler arası bekleme
-            wait_time = random.uniform(60, 90)
-            logging.info(f"⏳ Waiting {wait_time:.1f} seconds between tasks...")
-            await asyncio.sleep(wait_time)
+        if not await self.browser.initialize():
+            return False
+            
+        # Login
+        if not await self.browser.login():
+            logging.error("❌ Login failed")
+            return False
+            
+        logging.info("🎉 Bot successfully initialized!")
+        logging.info("📱 Session management active - minimal login attempts!")
+        return True
         
-            # GÖREV 2: Takip edilen hesapları kontrol et ve yanıt ver
-            logging.info("💬 TASK 2: Checking monitored accounts for replies...")
-            task2_start = datetime.now()
-            await self.reply_to_all_recent_tweets()
-            task2_duration = (datetime.now() - task2_start).total_seconds()
-            logging.info(f"✅ TASK 2 completed in {task2_duration:.1f} seconds")
-        
-            workflow_duration = (datetime.now() - workflow_start_time).total_seconds()
-            logging.info(f"✅ COMPLETE workflow finished in {workflow_duration/60:.1f} minutes!")
-        
-        except Exception as e:
-            logging.error(f"❌ Error in complete workflow: {e}")
-    
-    async def post_project_content(self):
-        """GÖREV 1: 2 Web3 projesi seç ve içerik paylaş"""
+    async def post_web3_projects(self):
+        """2 rastgele Web3 projesi hakkında tweet gönder"""
         try:
             logging.info("🚀 Selecting and posting Web3 project content...")
             
-            # Projects listesinden 2 proje seç
-            selected_projects = self.content_generator.select_random_projects(2)
-            logging.info(f"📋 Selected projects: {[p['name'] for p in selected_projects]}")
+            # 2 rastgele proje seç
+            selected_projects = random.sample(self.projects, 2)
+            project_names = [p['name'] for p in selected_projects]
+            logging.info(f"📋 Selected projects: {project_names}")
+            
+            success_count = 0
             
             for i, project in enumerate(selected_projects):
                 try:
                     logging.info(f"📝 Processing project {i+1}/2: {project['name']}")
                     
-                    # Gemini ile içerik üret
+                    # İçerik oluştur
                     content = await self.content_generator.generate_project_content(project)
                     
                     if content:
                         # Tweet gönder
-                        success = await self.twitter_browser.post_tweet(content)
-                        if success:
-                            logging.info(f"✅ Posted content for {project['name']}")
-                            logging.info(f"📝 Content: {content[:100]}...")
+                        if await self.browser.post_tweet(content):
+                            logging.info(f"✅ Successfully posted content for {project['name']}")
+                            success_count += 1
                         else:
                             logging.error(f"❌ Failed to post content for {project['name']}")
                     else:
-                        logging.error(f"❌ No content generated for {project['name']}")
+                        logging.error(f"❌ Failed to generate content for {project['name']}")
                     
-                    # Projeler arası bekleme (rate limit koruması)
+                    # Projeler arası bekleme
                     if i < len(selected_projects) - 1:
-                        wait_time = random.uniform(30, 60)  # 30-60 saniye
+                        wait_time = random.uniform(30, 60)
                         logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next project...")
                         await asyncio.sleep(wait_time)
                         
@@ -159,210 +185,160 @@ class TwitterBot:
                     logging.error(f"❌ Error processing project {project['name']}: {e}")
                     continue
             
-            logging.info("✅ Project content posting completed!")
-                
+            logging.info(f"📊 Project posting completed: {success_count}/2 successful")
+            return success_count > 0
+            
         except Exception as e:
-            logging.error(f"❌ Error in project content posting: {e}")
-    
-    async def reply_to_all_recent_tweets(self):
-        """GÖREV 2: Monitored accounts listesindeki hesapları kontrol et ve yanıt ver"""
+            logging.error(f"❌ Error in post_web3_projects: {e}")
+            return False
+            
+    async def reply_to_monitored_accounts(self):
+        """Takip edilen hesapların tweetlerine cevap ver"""
         try:
-            logging.info("💬 Checking monitored accounts for recent tweets...")
+            logging.info("💬 Starting reply task for monitored accounts...")
             
-            # Monitored accounts listesinden TÜM hesapları al
-            all_accounts = self.content_generator.monitored_accounts
-            logging.info(f"👥 Total monitored accounts to check: {len(all_accounts)}")
+            # 3 rastgele hesap seç
+            selected_accounts = random.sample(self.monitored_accounts, 3)
+            logging.info(f"👥 Selected accounts: {selected_accounts}")
             
-            # Son 1 saat içinde tweet atan hesapları bul
-            recent_tweeters = []
-            current_time = datetime.now()
-            one_hour_ago = current_time - timedelta(hours=1)
+            success_count = 0
             
-            logging.info(f"🕐 Looking for tweets after: {one_hour_ago.strftime('%Y-%m-%d %H:%M:%S')}")
-            
-            # Her monitored account'u sırasıyla kontrol et
-            for i, username in enumerate(all_accounts):
+            for account in selected_accounts:
                 try:
-                    logging.info(f"🔍 Checking @{username} ({i+1}/{len(all_accounts)})")
-                    
-                    # Kullanıcıyı takip et (eğer değilse)
-                    await self.twitter_browser.follow_user(username)
-                    await asyncio.sleep(random.uniform(2, 5))  # Kısa bekleme
+                    logging.info(f"🔍 Processing @{account}...")
                     
                     # Son tweet'i al
-                    tweet_data = await self.twitter_browser.get_latest_tweet(username)
+                    tweet_data = await self.browser.get_latest_tweet(account)
                     
-                    if tweet_data and tweet_data.get('url') and tweet_data.get('time'):
-                        try:
-                            # Tweet zamanını parse et
-                            tweet_time = datetime.fromisoformat(tweet_data['time'].replace('Z', '+00:00'))
-                            tweet_time_local = tweet_time.astimezone()
-                            
-                            # Son 1 saat içinde mi?
-                            if tweet_time_local > one_hour_ago:
-                                recent_tweeters.append({
-                                    'username': username,
-                                    'tweet_data': tweet_data,
-                                    'tweet_time': tweet_time_local
-                                })
-                                logging.info(f"✅ @{username} tweeted recently at {tweet_time_local.strftime('%H:%M:%S')}")
+                    if tweet_data and tweet_data.get('url'):
+                        # Cevap içeriği oluştur
+                        reply_content = await self.content_generator.generate_reply(tweet_data)
+                        
+                        if reply_content:
+                            # Cevap gönder
+                            if await self.browser.reply_to_tweet(tweet_data['url'], reply_content):
+                                logging.info(f"✅ Successfully replied to @{account}")
+                                success_count += 1
                             else:
-                                logging.info(f"⏰ @{username}'s last tweet is older than 1 hour")
-                        except Exception as time_error:
-                            logging.warning(f"⚠️ Could not parse tweet time for @{username}: {time_error}")
-                    else:
-                        logging.info(f"ℹ️ No recent tweets found for @{username}")
-                    
-                    # Her hesap kontrolü arasında kısa bekleme (rate limit için)
-                    if i < len(all_accounts) - 1:
-                        await asyncio.sleep(random.uniform(3, 8))  # 3-8 saniye
-                        
-                except Exception as e:
-                    logging.error(f"❌ Error checking @{username}: {e}")
-                    continue
-            
-            # Son 1 saat içinde tweet atan hesapları logla
-            logging.info(f"🎯 Found {len(recent_tweeters)} accounts with recent tweets")
-            
-            if recent_tweeters:
-                for tweeter in recent_tweeters:
-                    logging.info(f"📝 @{tweeter['username']} - {tweeter['tweet_time'].strftime('%H:%M:%S')}")
-            
-            # Recent tweeters'a yanıt ver
-            await self.reply_to_recent_tweeters(recent_tweeters)
-            
-            logging.info("✅ Reply checking completed!")
-                    
-        except Exception as e:
-            logging.error(f"❌ Error in checking monitored accounts: {e}")
-    
-    async def reply_to_recent_tweeters(self, recent_tweeters):
-        """Son 1 saat içinde tweet atan hesaplara Gemini ile yanıt üret ve gönder"""
-        try:
-            if not recent_tweeters:
-                logging.info("ℹ️ No recent tweeters found to reply to")
-                return
-            
-            logging.info(f"💬 Replying to {len(recent_tweeters)} recent tweets...")
-            
-            for i, tweeter in enumerate(recent_tweeters):
-                try:
-                    username = tweeter['username']
-                    tweet_data = tweeter['tweet_data']
-                    
-                    logging.info(f"💬 Generating reply for @{username} ({i+1}/{len(recent_tweeters)})")
-                    
-                    # Gemini ile yanıt üret
-                    reply_content = await self.content_generator.generate_reply(tweet_data)
-                    
-                    if reply_content:
-                        # Yanıt gönder
-                        success = await self.twitter_browser.reply_to_tweet(
-                            tweet_data['url'], 
-                            reply_content
-                        )
-                        
-                        if success:
-                            logging.info(f"✅ Replied to @{username}")
-                            logging.info(f"💬 Reply: {reply_content[:100]}...")
+                                logging.error(f"❌ Failed to reply to @{account}")
                         else:
-                            logging.error(f"❌ Failed to reply to @{username}")
+                            logging.error(f"❌ Failed to generate reply for @{account}")
                     else:
-                        logging.error(f"❌ No reply generated for @{username}")
+                        logging.warning(f"⚠️ No tweet found for @{account}")
                     
-                    # Yanıtlar arası bekleme (rate limit koruması)
-                    if i < len(recent_tweeters) - 1:
-                        wait_time = random.uniform(30, 60)  # 30-60 saniye
-                        logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next reply...")
-                        await asyncio.sleep(wait_time)
+                    # Hesaplar arası bekleme
+                    wait_time = random.uniform(15, 30)
+                    logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next account...")
+                    await asyncio.sleep(wait_time)
                     
                 except Exception as e:
-                    logging.error(f"❌ Error replying to @{tweeter['username']}: {e}")
+                    logging.error(f"❌ Error processing @{account}: {e}")
                     continue
-                    
+            
+            logging.info(f"📊 Reply task completed: {success_count}/3 successful")
+            return success_count > 0
+            
         except Exception as e:
-            logging.error(f"❌ Error in reply workflow: {e}")
+            logging.error(f"❌ Error in reply_to_monitored_accounts: {e}")
+            return False
+            
+    async def run_complete_workflow(self):
+        """Tam workflow'u çalıştır"""
+        try:
+            logging.info("🔄 Starting COMPLETE workflow...")
+            logging.info(f"🕐 Workflow start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Login kontrolü
+            if not await self.browser.check_login_status():
+                logging.info("🔐 Login required, attempting to login...")
+                if not await self.browser.login():
+                    logging.error("❌ Login failed, skipping workflow")
+                    return False
+            
+            workflow_success = True
+            
+            # TASK 1: Web3 proje içeriği paylaş
+            logging.info("📋 TASK 1: Posting Web3 project content...")
+            task1_success = await self.post_web3_projects()
+            if not task1_success:
+                workflow_success = False
+            
+            # Görevler arası bekleme
+            logging.info("⏳ Waiting 2 minutes between tasks...")
+            await asyncio.sleep(120)
+            
+            # TASK 2: Monitored accounts'lara cevap ver
+            logging.info("📋 TASK 2: Replying to monitored accounts...")
+            task2_success = await self.reply_to_monitored_accounts()
+            if not task2_success:
+                workflow_success = False
+            
+            # Workflow tamamlandı
+            self.last_workflow_time = time.time()
+            
+            if workflow_success:
+                logging.info("🎉 COMPLETE workflow finished successfully!")
+            else:
+                logging.warning("⚠️ COMPLETE workflow finished with some errors")
+            
+            return workflow_success
+            
+        except Exception as e:
+            logging.error(f"❌ Error in complete workflow: {e}")
+            return False
     
     async def run(self):
-        """Bot'u çalıştır"""
-        # Signal handlers
-        signal.signal(signal.SIGTERM, self.signal_handler)
-        signal.signal(signal.SIGINT, self.signal_handler)
-        
-        # Bot'u başlat
-        if not await self.initialize():
-            logging.error("❌ Bot could not be initialized")
-            return
-        
-        self.is_running = True
-        
-        logging.info("🤖 Twitter Bot is now running!")
-        logging.info("📋 Task 1: Post 2 Web3 projects")
-        logging.info("💬 Task 2: Reply to monitored accounts")
-        logging.info("🛡️ Anti-detection measures active")
-        logging.info("📱 Persistent session with minimal login attempts")
-        logging.info(f"🚀 Projects available: {len(self.content_generator.projects)}")
-        logging.info(f"👥 Monitored accounts: {len(self.content_generator.monitored_accounts)}")
-        
-        # İLK BAŞLANGIÇTA HEMEN KOMPLE WORKFLOW ÇALIŞTIR
-        logging.info("🚀 Starting initial COMPLETE workflow NOW...")
-        await self.complete_workflow()  # İlk komple workflow HEMEN
-        
-        # Ana döngü - Her 2 saatte bir workflow çalıştır
-        last_workflow_time = datetime.now()
-        workflow_interval = timedelta(hours=2)
-        
-        logging.info("🚀 Next COMPLETE workflow will start in 2 hours...")
-        
-        while self.is_running:
-            try:
-                current_time = datetime.now()
+        while self.initialization_attempts < self.max_init_attempts:
+            if await self.initialize():
+                logging.info("🤖 Twitter Bot is now running!")
+                logging.info("📋 Task 1: Post 2 Web3 projects")
+                logging.info("💬 Task 2: Reply to monitored accounts")
+                logging.info("🛡️ Anti-detection measures active")
+                logging.info("📱 Persistent session with minimal login attempts")
+                logging.info(f"🚀 Projects available: {len(self.projects)}")
+                logging.info(f"👥 Monitored accounts: {len(self.monitored_accounts)}")
                 
-                # 2 saat geçti mi kontrol et
-                if current_time - last_workflow_time >= workflow_interval:
-                    logging.info("⏰ 2 hours passed - starting COMPLETE workflow...")
-                    await self.complete_workflow()
-                    last_workflow_time = current_time
-                    logging.info("🚀 Next COMPLETE workflow will start in 2 hours...")
-                
-                # Her 5 dakika kontrol et
-                await asyncio.sleep(300)
-                
-                # Her 12 saatte bir session durumunu kontrol et
-                if current_time.minute == 0 and current_time.hour % 12 == 0:
-                    logging.info("🔍 Periodic session health check...")
-                    if not await self.twitter_browser.quick_login_check():
-                        logging.warning("⚠️ Session lost during health check")
-                
-            except Exception as e:
-                logging.error(f"❌ Error in main loop: {e}")
-                await asyncio.sleep(300)
-    
-    def signal_handler(self, signum, frame):
-        """Shutdown signal handler"""
-        logging.info(f"🛑 Received signal {signum}, shutting down gracefully...")
-        self.is_running = False
-        if self.twitter_browser:
-            asyncio.create_task(self.twitter_browser.close())
-        sys.exit(0)
+                # Ana bot döngüsü
+                try:
+                    # İlk workflow'u hemen başlat
+                    logging.info("🚀 Starting initial COMPLETE workflow NOW...")
+                    await self.run_complete_workflow()
+                    
+                    # Ana döngü
+                    while True:
+                        current_time = time.time()
+                        time_since_last = current_time - self.last_workflow_time
+                        
+                        if time_since_last >= self.workflow_interval:
+                            logging.info("🔄 30 minutes passed, starting new workflow...")
+                            await self.run_complete_workflow()
+                        else:
+                            remaining_time = self.workflow_interval - time_since_last
+                            remaining_minutes = remaining_time / 60
+                            logging.info(f"⏰ Next workflow in {remaining_minutes:.1f} minutes")
+                        
+                        # 5 dakika bekle
+                        await asyncio.sleep(300)
+                        
+                except KeyboardInterrupt:
+                    logging.info("🛑 Bot stopped by user")
+                    break
+                    
+            else:
+                if self.initialization_attempts >= self.max_init_attempts:
+                    logging.error(f"❌ Failed to initialize after {self.max_init_attempts} attempts")
+                    break
+                else:
+                    logging.warning(f"⚠️ Initialization failed, retrying in 30 seconds...")
+                    await asyncio.sleep(30)
+                    
+        # Cleanup
+        if self.browser:
+            await self.browser.close()
 
 async def main():
     bot = TwitterBot()
-    try:
-        await bot.run()
-    except KeyboardInterrupt:
-        logging.info("🛑 Bot stopped by user")
-    except Exception as e:
-        logging.error(f"❌ Unexpected error: {e}")
-    finally:
-        # Temiz kapatma
-        if bot.twitter_browser:
-            await bot.twitter_browser.close()
-        logging.info("👋 Bot shutdown complete")
+    await bot.run()
 
 if __name__ == "__main__":
-    # Logs klasörünü oluştur
-    os.makedirs('logs', exist_ok=True)
-    
-    # Bot'u çalıştır
     asyncio.run(main())
