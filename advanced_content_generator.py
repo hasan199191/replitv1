@@ -49,13 +49,13 @@ class AdvancedContentGenerator:
             # Fallback olarak başka modelleri dene
             try:
                 logging.info("Trying fallback models...")
-            
+        
                 fallback_models = [
                     'gemini-1.5-flash',
                     'gemini-1.5-flash-latest',
                     'gemini-flash'
                 ]
-            
+        
                 for model_name in fallback_models:
                     try:
                         self.model = genai.GenerativeModel(model_name)
@@ -68,7 +68,7 @@ class AdvancedContentGenerator:
                     except Exception as model_error:
                         logging.warning(f"Model {model_name} failed: {model_error}")
                         continue
-            
+        
             # Son çare olarak sync versiyonu dene
             self.model = genai.GenerativeModel('gemini-1.5-flash')
             self.load_data()
