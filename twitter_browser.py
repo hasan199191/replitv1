@@ -498,26 +498,37 @@ class TwitterBrowser:
             await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(5)
 
-            # Tweet butonuna tıkla
-            # Tweet butonuna tıkla yerine klavye kısayolu kullan
-            self.logger.info("⌨️ Using keyboard shortcut to open compose...")
-            await self.page.keyboard.press('n')  # Twitter'da 'n' tuşu compose modal açar
-            await asyncio.sleep(4)
+            # Direkt compose URL'sine git
+            self.logger.info("🔗 Going directly to compose URL...")
+            await self.page.goto("https://x.com/compose/post", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
 
-            # Eğer bu çalışmazsa Ctrl+N dene
-            try:
-                # Compose modal açıldı mı kontrol et
-                compose_check = await self.page.wait_for_selector('div[aria-label="Tweet text"]', timeout=3000)
-                if not compose_check:
-                    self.logger.info("⌨️ Trying Ctrl+N shortcut...")
-                    await self.page.keyboard.press('Control+n')
-                    await asyncio.sleep(4)
-            except:
-                self.logger.info("⌨️ Trying Ctrl+N shortcut...")
-                await self.page.keyboard.press('Control+n')
-                await asyncio.sleep(4)
+            # Eğer compose URL çalışmazsa alternatif dene
+            current_url = self.page.url
+            if "compose" not in current_url:
+                self.logger.info("🔗 Trying alternative compose URL...")
+                await self.page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(5)
 
-            self.logger.info("✅ Compose modal should be open via keyboard shortcut")
+            # Hala çalışmıyorsa JavaScript ile modal aç
+            current_url = self.page.url
+            if "compose" not in current_url:
+                self.logger.info("🔧 Using JavaScript to open compose modal...")
+                await self.page.evaluate("""
+                    // Twitter'ın compose modal açma fonksiyonunu çağır
+                    const composeButton = document.querySelector('[data-testid="SideNav_NewTweet_Button"]') || 
+                                         document.querySelector('[aria-label="Post"]') ||
+                                         document.querySelector('[aria-label="Tweet"]');
+                    if (composeButton) {
+                        composeButton.click();
+                    } else {
+                        // Manuel olarak modal oluştur
+                        window.dispatchEvent(new KeyboardEvent('keydown', {key: 'n', code: 'KeyN'}));
+                    }
+                """)
+                await asyncio.sleep(5)
+
+            self.logger.info("✅ Compose should be open now")
 
             self.logger.info("✅ Tweet compose modal should be open")
             
