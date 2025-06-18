@@ -819,17 +819,18 @@ class TwitterBrowser:
                                     }
                                     tweets.append(tweet_data)
                                     self.logger.info(f"✅ Recent tweet found for @{username}: {tweet_text[:50]}...")
-                
+                    
                     except Exception as e:
                         self.logger.warning(f"⚠️ Error processing tweet {i+1}: {e}")
                         continue
+                
+                self.logger.info(f"📊 Found {len(tweets)} recent tweets for @{username}")
+                return tweets
+                
+            except Exception as e:
+                self.logger.warning(f"⚠️ Could not find tweets for @{username}: {e}")
+                return []
         
-        except Exception as e:
-            self.logger.warning(f"⚠️ Could not find tweets for @{username}: {e}")
-        
-        self.logger.info(f"📊 Found {len(tweets)} recent tweets for @{username}")
-        return tweets
-    
         except Exception as e:
             self.logger.error(f"❌ Error getting recent tweets for @{username}: {e}")
             return []
@@ -940,34 +941,34 @@ class TwitterBrowser:
                 except Exception as e:
                     self.logger.error(f"❌ Error adding tweet part {i+1}: {e}")
                     continue
+            
+            # Thread'i gönder
+            post_selectors = [
+                'div[data-testid="tweetButton"]',
+                'button[data-testid="tweetButton"]',
+                'div[role="button"][data-testid="tweetButton"]'
+            ]
         
-        # Thread'i gönder
-        post_selectors = [
-            'div[data-testid="tweetButton"]',
-            'button[data-testid="tweetButton"]',
-            'div[role="button"][data-testid="tweetButton"]'
-        ]
-    
-        post_button = None
-        for selector in post_selectors:
-            try:
-                post_button = await self.page.wait_for_selector(selector, timeout=3000)
-                if post_button:
-                    is_disabled = await post_button.get_attribute('aria-disabled')
-                    if is_disabled != 'true':
-                        break
-            except:
-                continue
-    
-        if post_button:
-            await post_button.click()
-            await asyncio.sleep(3)
-            self.logger.info("✅ Tweet thread posted successfully!")
-            return True
-        else:
-            self.logger.error("❌ Could not find active post button")
-            return False
-    
+            post_button = None
+            for selector in post_selectors:
+                try:
+                    post_button = await self.page.wait_for_selector(selector, timeout=3000)
+                    if post_button:
+                        is_disabled = await post_button.get_attribute('aria-disabled')
+                        if is_disabled != 'true':
+                            break
+                except:
+                    continue
+        
+            if post_button:
+                await post_button.click()
+                await asyncio.sleep(3)
+                self.logger.info("✅ Tweet thread posted successfully!")
+                return True
+            else:
+                self.logger.error("❌ Could not find active post button")
+                return False
+        
         except Exception as e:
             self.logger.error(f"❌ Error posting tweet thread: {e}")
             return False
