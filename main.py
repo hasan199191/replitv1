@@ -113,6 +113,38 @@ class TwitterBot:
         logging.info(f"Data loaded: {len(self.projects)} projects, {len(self.monitored_accounts)} accounts")
         return True
         
+    async def restart_browser_if_needed(self):
+        """Restart browser if it's having issues"""
+        try:
+            if self.browser:
+                # Test if browser is responsive
+                try:
+                    await self.browser.page.evaluate('1 + 1')
+                    return True
+                except Exception as e:
+                    if "crashed" in str(e).lower() or "closed" in str(e).lower():
+                        logging.warning("🔄 Browser issues detected, restarting...")
+                        
+                        # Close current browser
+                        try:
+                            await self.browser.close()
+                        except:
+                            pass
+                        
+                        # Reinitialize browser
+                        self.browser = TwitterBrowser()
+                        if await self.browser.initialize():
+                            if await self.browser.login():
+                                logging.info("✅ Browser restarted successfully")
+                                return True
+                        
+                        logging.error("❌ Browser restart failed")
+                        return False
+            return True
+        except Exception as e:
+            logging.error(f"❌ Error in browser restart: {e}")
+            return False
+        
     async def initialize(self):
         self.initialization_attempts += 1
         logging.info(f"🤖 Initializing Twitter Bot (Attempt {self.initialization_attempts}/{self.max_init_attempts})...")
@@ -150,44 +182,71 @@ class TwitterBot:
         """2 rastgele Web3 projesi hakkında tweet gönder"""
         try:
             logging.info("🚀 Selecting and posting Web3 project content...")
-            
+        
             # 2 rastgele proje seç
             selected_projects = random.sample(self.projects, 2)
             project_names = [p['name'] for p in selected_projects]
             logging.info(f"📋 Selected projects: {project_names}")
-            
+        
             success_count = 0
-            
+        
             for i, project in enumerate(selected_projects):
                 try:
                     logging.info(f"📝 Processing project {i+1}/2: {project['name']}")
-                    
+                
                     # İçerik oluştur
                     content = await self.content_generator.generate_project_content(project)
-                    
+                
                     if content:
-                        # Tweet gönder
-                        if await self.browser.post_tweet(content):
-                            logging.info(f"✅ Successfully posted content for {project['name']}")
-                            success_count += 1
+                        # İçerik 280 karakterden uzunsa thread olarak gönder
+                        if len(content) > 280:
+                            # İçeriği parçalara böl
+                            content_parts = []
+                            words = content.split()
+                            current_part = ""
+                        
+                            for word in words:
+                                if len(current_part + " " + word) <= 275:  # 5 karakter margin
+                                    current_part += " " + word if current_part else word
+                                else:
+                                    if current_part:
+                                        content_parts.append(current_part)
+                                    current_part = word
+                        
+                            if current_part:
+                                content_parts.append(current_part)
+                        
+                            logging.info(f"📝 Content split into {len(content_parts)} parts")
+                        
+                            # Thread olarak gönder
+                            if await self.browser.post_tweet_thread(content_parts):
+                                logging.info(f"✅ Successfully posted thread for {project['name']}")
+                                success_count += 1
+                            else:
+                                logging.error(f"❌ Failed to post thread for {project['name']}")
                         else:
-                            logging.error(f"❌ Failed to post content for {project['name']}")
+                            # Tek tweet olarak gönder
+                            if await self.browser.post_tweet(content):
+                                logging.info(f"✅ Successfully posted content for {project['name']}")
+                                success_count += 1
+                            else:
+                                logging.error(f"❌ Failed to post content for {project['name']}")
                     else:
                         logging.error(f"❌ Failed to generate content for {project['name']}")
-                    
+                
                     # Projeler arası bekleme
                     if i < len(selected_projects) - 1:
                         wait_time = random.uniform(30, 60)
                         logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next project...")
                         await asyncio.sleep(wait_time)
-                        
+                    
                 except Exception as e:
                     logging.error(f"❌ Error processing project {project['name']}: {e}")
                     continue
-            
+        
             logging.info(f"📊 Project posting completed: {success_count}/2 successful")
             return success_count > 0
-            
+        
         except Exception as e:
             logging.error(f"❌ Error in post_web3_projects: {e}")
             return False
@@ -196,27 +255,30 @@ class TwitterBot:
         """Takip edilen hesapların tweetlerine cevap ver"""
         try:
             logging.info("💬 Starting reply task for monitored accounts...")
-            
+        
             # 3 rastgele hesap seç
             selected_accounts = random.sample(self.monitored_accounts, 3)
             logging.info(f"👥 Selected accounts: {selected_accounts}")
-            
+        
             success_count = 0
-            
+        
             for account in selected_accounts:
                 try:
                     logging.info(f"🔍 Processing @{account}...")
+                
+                    # Son tweetleri al (son 1 saat içindeki)
+                    recent_tweets = await self.browser.get_user_recent_tweets(account, limit=3)
+                
+                    if recent_tweets:
+                        # En son tweet'e cevap ver
+                        latest_tweet = recent_tweets[0]
                     
-                    # Son tweet'i al
-                    tweet_data = await self.browser.get_latest_tweet(account)
-                    
-                    if tweet_data and tweet_data.get('url'):
                         # Cevap içeriği oluştur
-                        reply_content = await self.content_generator.generate_reply(tweet_data)
-                        
+                        reply_content = await self.content_generator.generate_reply(latest_tweet)
+                    
                         if reply_content:
                             # Cevap gönder
-                            if await self.browser.reply_to_tweet(tweet_data['url'], reply_content):
+                            if await self.browser.reply_to_tweet(latest_tweet['url'], reply_content):
                                 logging.info(f"✅ Successfully replied to @{account}")
                                 success_count += 1
                             else:
@@ -224,8 +286,8 @@ class TwitterBot:
                         else:
                             logging.error(f"❌ Failed to generate reply for @{account}")
                     else:
-                        logging.warning(f"⚠️ No tweet found for @{account}")
-                    
+                        logging.warning(f"⚠️ No recent tweets found for @{account}")
+                
                     # Hesaplar arası bekleme
                     wait_time = random.uniform(15, 30)
                     logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next account...")
@@ -234,10 +296,10 @@ class TwitterBot:
                 except Exception as e:
                     logging.error(f"❌ Error processing @{account}: {e}")
                     continue
-            
+        
             logging.info(f"📊 Reply task completed: {success_count}/3 successful")
             return success_count > 0
-            
+        
         except Exception as e:
             logging.error(f"❌ Error in reply_to_monitored_accounts: {e}")
             return False
@@ -254,6 +316,11 @@ class TwitterBot:
                 if not await self.browser.login():
                     logging.error("❌ Login failed, skipping workflow")
                     return False
+            
+            # Browser health check
+            if not await self.restart_browser_if_needed():
+                logging.error("❌ Browser restart failed, skipping workflow")
+                return False
             
             workflow_success = True
             
