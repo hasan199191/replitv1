@@ -908,22 +908,61 @@ async def main():
                 logging.warning("⚠️ İçerik üretilemedi, thread atlanıyor.")
 
             # 2. İzlenen hesapların son tweetlerine reply at
-            for account in accounts:
+            reply_count = 0
+            max_replies_per_cycle = 5  # Döngü başına maksimum reply sayısı
+
+            for account in accounts[:10]:  # İlk 10 hesabı kontrol et
                 try:
-                    tweet_id = await twitter.get_latest_tweet_id(account)  # account artık string
+                    if reply_count >= max_replies_per_cycle:
+                        logging.info(f"✅ Maksimum reply sayısına ulaşıldı ({max_replies_per_cycle})")
+                        break
+                        
+                    logging.info(f"🔍 {account} hesabı kontrol ediliyor...")
+                    
+                    tweet_id = await twitter.get_latest_tweet_id(account)
                     if tweet_id:
+                        logging.info(f"✅ Tweet ID bulundu: {tweet_id}")
+                        
                         tweet_content = await twitter.get_tweet_content(tweet_id)
                         if tweet_content:
+                            logging.info(f"✅ Tweet içeriği alındı: {tweet_content[:100]}...")
+                            
                             # Son 1 saatin tweet'i mi kontrol et
                             tweet_time = await twitter.get_tweet_time(tweet_id)
-                            if tweet_time and (datetime.now() - tweet_time).total_seconds() <= 3600:  # 1 saat = 3600 saniye
-                                reply = await content_generator.generate_reply_content(tweet_content, account)
-                                if reply:
-                                    await twitter.reply_to_tweet(tweet_id, reply)
-                                    await asyncio.sleep(random.uniform(30, 60))  # Her reply arasında bekle
+                            if tweet_time:
+                                time_diff = (datetime.now() - tweet_time).total_seconds()
+                                logging.info(f"⏰ Tweet yaşı: {time_diff/3600:.1f} saat")
+                                
+                                if time_diff <= 3600:  # 1 saat = 3600 saniye
+                                    logging.info(f"✅ Tweet son 1 saat içinde, reply üretiliyor...")
+                                    
+                                    reply = await content_generator.generate_reply_content(tweet_content, account)
+                                    if reply:
+                                        logging.info(f"💬 Reply üretildi: {reply}")
+                                        
+                                        # Reply'ı gönder
+                                        if await twitter.reply_to_tweet(tweet_id, reply):
+                                            reply_count += 1
+                                            logging.info(f"✅ Reply gönderildi! ({reply_count}/{max_replies_per_cycle})")
+                                            await asyncio.sleep(random.uniform(30, 60))
+                                        else:
+                                            logging.error("❌ Reply gönderilemedi")
+                                    else:
+                                        logging.warning("⚠️ Reply üretilemedi")
+                                else:
+                                    logging.info(f"ℹ️ Tweet çok eski ({time_diff/3600:.1f} saat), atlanıyor")
+                            else:
+                                logging.warning("⚠️ Tweet zamanı alınamadı")
+                        else:
+                            logging.warning("⚠️ Tweet içeriği alınamadı")
+                    else:
+                        logging.warning(f"⚠️ {account} için tweet bulunamadı")
+                        
                 except Exception as e:
                     logging.error(f"❌ {account} için reply hatası: {e}")
                     continue
+
+            logging.info(f"✅ Reply döngüsü tamamlandı. Toplam reply: {reply_count}")
 
             logging.info("⏳ 2 saat bekleniyor...")
             print("⏳ 2 saat bekleniyor...")
