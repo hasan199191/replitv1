@@ -1,5 +1,4 @@
 import asyncio
-import schedule
 import time
 import logging
 import os
@@ -87,28 +86,39 @@ class TwitterBot:
     async def complete_workflow(self):
         """KOMPLE WORKFLOW - 2 Görev: Proje Paylaşımı + Reply Kontrolü"""
         try:
+            workflow_start_time = datetime.now()
             logging.info("🔄 Starting COMPLETE workflow...")
-            
+            logging.info(f"🕐 Workflow start time: {workflow_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
             # Session durumunu kontrol et
             if not await self.twitter_browser.quick_login_check():
                 logging.warning("⚠️ Session lost, attempting to restore...")
                 if not await self.twitter_browser.login():
                     logging.error("❌ Could not restore session, skipping this cycle")
                     return
-            
+        
             # GÖREV 1: 2 Web3 projesi seç ve paylaş
             logging.info("📋 TASK 1: Posting Web3 project content...")
+            task1_start = datetime.now()
             await self.post_project_content()
-            
+            task1_duration = (datetime.now() - task1_start).total_seconds()
+            logging.info(f"✅ TASK 1 completed in {task1_duration:.1f} seconds")
+        
             # Görevler arası bekleme
-            await asyncio.sleep(random.uniform(60, 90))  # 1-1.5 dakika
-            
+            wait_time = random.uniform(60, 90)
+            logging.info(f"⏳ Waiting {wait_time:.1f} seconds between tasks...")
+            await asyncio.sleep(wait_time)
+        
             # GÖREV 2: Takip edilen hesapları kontrol et ve yanıt ver
             logging.info("💬 TASK 2: Checking monitored accounts for replies...")
+            task2_start = datetime.now()
             await self.reply_to_all_recent_tweets()
-            
-            logging.info("✅ COMPLETE workflow finished!")
-            
+            task2_duration = (datetime.now() - task2_start).total_seconds()
+            logging.info(f"✅ TASK 2 completed in {task2_duration:.1f} seconds")
+        
+            workflow_duration = (datetime.now() - workflow_start_time).total_seconds()
+            logging.info(f"✅ COMPLETE workflow finished in {workflow_duration/60:.1f} minutes!")
+        
         except Exception as e:
             logging.error(f"❌ Error in complete workflow: {e}")
     
@@ -273,24 +283,6 @@ class TwitterBot:
         except Exception as e:
             logging.error(f"❌ Error in reply workflow: {e}")
     
-    def schedule_tasks(self):
-        """Görevleri zamanla - Her 2 saatte bir KOMPLE workflow"""
-        # Her 2 saatte bir komple workflow çalıştır (2 görev birden)
-        schedule.every(2).hours.do(
-            lambda: asyncio.create_task(self.complete_workflow())
-        )
-        
-        logging.info("📅 Scheduled COMPLETE workflow every 2 hours")
-        logging.info("📋 Each cycle includes: Project posting + Reply checking")
-    
-    def signal_handler(self, signum, frame):
-        """Shutdown signal handler"""
-        logging.info(f"🛑 Received signal {signum}, shutting down gracefully...")
-        self.is_running = False
-        if self.twitter_browser:
-            asyncio.create_task(self.twitter_browser.close())
-        sys.exit(0)
-    
     async def run(self):
         """Bot'u çalıştır"""
         # Signal handlers
@@ -303,10 +295,8 @@ class TwitterBot:
             return
         
         self.is_running = True
-        self.schedule_tasks()
         
-        logging.info("🤖 Twitter Bot is now running with COMPLETE workflow!")
-        logging.info("⏰ Will execute BOTH tasks every 2 hours")
+        logging.info("🤖 Twitter Bot is now running!")
         logging.info("📋 Task 1: Post 2 Web3 projects")
         logging.info("💬 Task 2: Reply to monitored accounts")
         logging.info("🛡️ Anti-detection measures active")
@@ -314,22 +304,31 @@ class TwitterBot:
         logging.info(f"🚀 Projects available: {len(self.content_generator.projects)}")
         logging.info(f"👥 Monitored accounts: {len(self.content_generator.monitored_accounts)}")
         
-        # İLK BAŞLANGIÇTA KOMPLE WORKFLOW ÇALIŞTIR
-        logging.info("🚀 Starting initial COMPLETE workflow in 2 minutes...")
-        await asyncio.sleep(120)  # 2 dakika bekle
-        await self.complete_workflow()  # İlk komple workflow
+        # İLK BAŞLANGIÇTA HEMEN KOMPLE WORKFLOW ÇALIŞTIR
+        logging.info("🚀 Starting initial COMPLETE workflow NOW...")
+        await self.complete_workflow()  # İlk komple workflow HEMEN
         
-        # Sonraki workflow'u 2 saat sonra çalıştır
+        # Ana döngü - Her 2 saatte bir workflow çalıştır
+        last_workflow_time = datetime.now()
+        workflow_interval = timedelta(hours=2)
+        
         logging.info("🚀 Next COMPLETE workflow will start in 2 hours...")
         
-        # Ana döngü - Sürekli çalış
         while self.is_running:
             try:
-                schedule.run_pending()
-                await asyncio.sleep(300)  # Her 5 dakika kontrol et
+                current_time = datetime.now()
+                
+                # 2 saat geçti mi kontrol et
+                if current_time - last_workflow_time >= workflow_interval:
+                    logging.info("⏰ 2 hours passed - starting COMPLETE workflow...")
+                    await self.complete_workflow()
+                    last_workflow_time = current_time
+                    logging.info("🚀 Next COMPLETE workflow will start in 2 hours...")
+                
+                # Her 5 dakika kontrol et
+                await asyncio.sleep(300)
                 
                 # Her 12 saatte bir session durumunu kontrol et
-                current_time = datetime.now()
                 if current_time.minute == 0 and current_time.hour % 12 == 0:
                     logging.info("🔍 Periodic session health check...")
                     if not await self.twitter_browser.quick_login_check():
@@ -338,6 +337,14 @@ class TwitterBot:
             except Exception as e:
                 logging.error(f"❌ Error in main loop: {e}")
                 await asyncio.sleep(300)
+    
+    def signal_handler(self, signum, frame):
+        """Shutdown signal handler"""
+        logging.info(f"🛑 Received signal {signum}, shutting down gracefully...")
+        self.is_running = False
+        if self.twitter_browser:
+            asyncio.create_task(self.twitter_browser.close())
+        sys.exit(0)
 
 async def main():
     bot = TwitterBot()
