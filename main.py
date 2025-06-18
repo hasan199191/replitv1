@@ -212,34 +212,107 @@ class TwitterBrowser:
 
     async def check_login_success(self, page):
         try:
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)  # Daha uzun bekle
             current_url = page.url.lower()
             
-            if 'login' not in current_url and 'signin' not in current_url and 'flow' not in current_url:
+            logging.info(f"🔍 Current URL after login attempt: {current_url}")
+            
+            # URL-based success indicators
+            success_urls = ['home', 'dashboard', 'compose']
+            failure_urls = ['login', 'signin', 'error', 'suspended', 'flow', 'challenge']
+            
+            # URL kontrolü
+            url_indicates_success = any(success_url in current_url for success_url in success_urls)
+            url_indicates_failure = any(failure_url in current_url for failure_url in failure_urls)
+            
+            logging.info(f"🔍 URL indicates success: {url_indicates_success}")
+            logging.info(f"🔍 URL indicates failure: {url_indicates_failure}")
+            
+            if url_indicates_failure:
+                logging.info('❌ Login failed - on failure page')
+                return False
+            
+            if url_indicates_success:
+                logging.info('✅ URL indicates success, checking for UI elements...')
+            
+                # UI element kontrolü
                 success_elements = [
                     '[data-testid="SideNav_NewTweet_Button"]',
                     '[href="/compose/post"]',
                     '[data-testid="primaryColumn"]',
-                    '[aria-label="Home timeline"]'
+                    '[aria-label="Home timeline"]',
+                    '[data-testid="AppTabBar_Home_Link"]',
+                    '[data-testid="SideNav_AccountSwitcher_Button"]'
                 ]
-                
+            
                 for selector in success_elements:
                     try:
-                        if await page.locator(selector).count() > 0:
-                            logging.info('✅ Login successful!')
+                        element_count = await page.locator(selector).count()
+                        logging.info(f"🔍 Element {selector}: {element_count} found")
+                        if element_count > 0:
+                            logging.info('✅ Login successful - UI element found!')
                             return True
-                    except:
+                    except Exception as e:
+                        logging.warning(f"⚠️ Error checking selector {selector}: {e}")
                         continue
+        
+            # Eğer URL belirsizse, sayfa içeriğini kontrol et
+            try:
+                page_content = await page.content()
             
-            failure_indicators = ['login', 'signin', 'error', 'suspended', 'flow']
-            for indicator in failure_indicators:
-                if indicator in current_url:
-                    logging.info(f'❌ Login failed - on {indicator} page')
+                # Başarı göstergeleri
+                success_indicators = [
+                    'data-testid="SideNav_NewTweet_Button"',
+                    'data-testid="primaryColumn"',
+                    'Home timeline',
+                    'What\'s happening'
+                ]
+            
+                # Başarısızlık göstergeleri  
+                failure_indicators = [
+                    'Sign in to X',
+                    'Log in',
+                    'Enter your password',
+                    'Something went wrong',
+                    'Try again'
+                ]
+            
+                success_found = any(indicator in page_content for indicator in success_indicators)
+                failure_found = any(indicator in page_content for indicator in failure_indicators)
+            
+                logging.info(f"🔍 Page content indicates success: {success_found}")
+                logging.info(f"🔍 Page content indicates failure: {failure_found}")
+            
+                if success_found:
+                    logging.info('✅ Login successful - page content indicates success!')
+                    return True
+            
+                if failure_found:
+                    logging.info('❌ Login failed - page content indicates failure')
                     return False
-                    
-            logging.info('❌ Login status unclear')
-            return False
             
+            except Exception as e:
+                logging.error(f"❌ Error checking page content: {e}")
+        
+            # Son çare: Sayfa başlığını kontrol et
+            try:
+                page_title = await page.title()
+                logging.info(f"🔍 Page title: {page_title}")
+            
+                if any(word in page_title.lower() for word in ['home', 'timeline', 'dashboard']):
+                    logging.info('✅ Login successful - page title indicates success!')
+                    return True
+            
+                if any(word in page_title.lower() for word in ['login', 'sign in', 'error']):
+                    logging.info('❌ Login failed - page title indicates failure')
+                    return False
+            
+            except Exception as e:
+                logging.error(f"❌ Error checking page title: {e}")
+        
+            logging.info('❌ Login status unclear - assuming failure')
+            return False
+        
         except Exception as e:
             logging.error(f'❌ Login check error: {e}')
             return False
@@ -471,7 +544,48 @@ class TwitterBrowser:
                 logging.error("❌ Could not enter password")
                 return False
                 
-            await asyncio.sleep(5)
+            # After password entry, add this debugging section:
+            await asyncio.sleep(8)  # Longer wait after password
+
+            # Check what happened after password entry
+            current_url_after_password = page.url.lower()
+            logging.info(f"🔍 URL after password entry: {current_url_after_password}")
+
+            # Check if we need to handle additional verification
+            verification_needed = False
+            try:
+                # Check for various verification prompts
+                verification_selectors = [
+                    'input[data-testid="ocfEnterTextTextInput"]',
+                    'input[name="text"]',
+                    'input[placeholder*="confirmation"]',
+                    'input[placeholder*="verification"]',
+                    'input[placeholder*="code"]',
+                    '[data-testid="ocfEnterTextTextInput"]'
+                ]
+            
+                for selector in verification_selectors:
+                    element_count = await page.locator(selector).count()
+                    if element_count > 0:
+                        logging.info(f"🔍 Verification element found: {selector}")
+                        verification_needed = True
+                        break
+                
+            except Exception as e:
+                logging.warning(f"⚠️ Error checking for verification: {e}")
+
+            if verification_needed:
+                logging.info('📧 Email doğrulama gerekiyor - otomatik işlem başlatılıyor...')
+                return await self.manual_verification_input(page)
+            else:
+                logging.info('ℹ️ No verification needed, checking login success...')
+            
+            # Take a screenshot for debugging (optional)
+            try:
+                await page.screenshot(path='/tmp/login_debug.png')
+                logging.info('📸 Debug screenshot saved to /tmp/login_debug.png')
+            except:
+                pass
             
             # Email doğrulama kontrolü
             email_verification_required = False
