@@ -62,9 +62,9 @@ class TwitterBrowser:
         return False
     
     async def initialize(self):
-        """Playwright + Chromium'u başlat - GELİŞTİRİLMİŞ SESSION MANAGEMENT"""
+        """Playwright + Chromium'u başlat - RENDER.COM UYUMLU"""
         try:
-            self.logger.info("🚀 Initializing Playwright + Chromium with persistent session...")
+            self.logger.info("🚀 Initializing Playwright + Chromium...")
             
             os.makedirs('data', exist_ok=True)
             os.makedirs(self.user_data_dir, exist_ok=True)
@@ -74,7 +74,7 @@ class TwitterBrowser:
             
             self.playwright = await async_playwright().start()
             
-            # PERSISTENT CONTEXT - Session'ı korur
+            # RENDER.COM için Chromium kullan (Chrome değil)
             self.browser = await self.playwright.chromium.launch_persistent_context(
                 user_data_dir=self.user_data_dir,
                 headless=True,  # Render için headless
@@ -127,7 +127,7 @@ class TwitterBrowser:
             
             self.page = await self.browser.new_page()
             
-            self.logger.info("✅ Playwright + Chromium initialized with persistent session!")
+            self.logger.info("✅ Playwright + Chromium initialized!")
             return True
             
         except Exception as e:
