@@ -492,24 +492,35 @@ class TwitterBrowser:
             await asyncio.sleep(3)
         
             # Tweet compose alanını bul - birden fazla selector dene
+            # Tweet compose alanını bul - GÜNCEL X.COM selectors
             compose_selectors = [
+                # X.com yeni selectors
                 'div[data-testid="tweetTextarea_0"]',
                 'div[contenteditable="true"][data-testid="tweetTextarea_0"]',
                 'div[role="textbox"][data-testid="tweetTextarea_0"]',
+                # Genel selectors
+                'div[contenteditable="true"][role="textbox"]',
                 'div[contenteditable="true"]',
                 'div[role="textbox"]',
-                '[data-testid="tweetTextarea_0"]',
-                'div[data-testid="tweetTextarea_0"][contenteditable="true"]',
-                'div[aria-label*="Post"]',
-                'div[aria-label*="Tweet"]',
+                # Aria label ile
+                'div[aria-label*="Post text"]',
+                'div[aria-label*="Tweet text"]',
                 'div[aria-label*="What is happening"]',
                 'div[aria-label*="What\'s happening"]',
+                # Placeholder ile
                 'div[placeholder*="What is happening"]',
                 'div[placeholder*="What\'s happening"]',
+                # CSS class ile
                 '.public-DraftEditor-content',
                 '.notranslate.public-DraftEditor-content',
                 'div[spellcheck="true"][role="textbox"]',
-                'div[contenteditable="true"][spellcheck="true"]'
+                'div[contenteditable="true"][spellcheck="true"]',
+                # X.com specific
+                'div[data-testid="tweetTextarea_0"][contenteditable="true"]',
+                'div[data-contents="true"]',
+                # Fallback selectors
+                '[contenteditable="true"]',
+                '[role="textbox"]'
             ]
         
             compose_element = None
@@ -523,62 +534,10 @@ class TwitterBrowser:
                     continue
         
             if not compose_element:
-                self.logger.warning("⚠️ Primary compose area not found, trying alternative methods...")
+                self.logger.warning("⚠️ Primary compose area not found, trying X.com specific methods...")
                 
-                # Alternatif 1: Tweet butonu ile compose alanını açmaya çalış
-                try:
-                    tweet_buttons = [
-                        'a[data-testid="SideNav_NewTweet_Button"]',
-                        'a[href="/compose/tweet"]',
-                        'a[href="/compose/post"]',
-                        'button[data-testid="SideNav_NewTweet_Button"]'
-                    ]
-                    
-                    for button_selector in tweet_buttons:
-                        try:
-                            tweet_button = await self.page.wait_for_selector(button_selector, timeout=3000)
-                            if tweet_button:
-                                await tweet_button.click()
-                                await asyncio.sleep(3)
-                                self.logger.info("✅ Clicked tweet button, looking for compose area again...")
-                                
-                                # Compose alanını tekrar ara
-                                for selector in compose_selectors:
-                                    try:
-                                        compose_element = await self.page.wait_for_selector(selector, timeout=3000)
-                                        if compose_element:
-                                            self.logger.info(f"✅ Found compose area after clicking tweet button: {selector}")
-                                            break
-                                    except:
-                                        continue
-                                
-                                if compose_element:
-                                    break
-                        except:
-                            continue
-                            
-                except Exception as e:
-                    self.logger.warning(f"⚠️ Alternative method 1 failed: {e}")
-                
-                # Alternatif 2: Klavye kısayolu ile compose alanını açmaya çalış
-                if not compose_element:
-                    try:
-                        self.logger.info("🔄 Trying keyboard shortcut to open compose...")
-                        await self.page.keyboard.press('n')  # Twitter'da 'n' tuşu compose açar
-                        await asyncio.sleep(2)
-                        
-                        # Compose alanını tekrar ara
-                        for selector in compose_selectors:
-                            try:
-                                compose_element = await self.page.wait_for_selector(selector, timeout=3000)
-                                if compose_element:
-                                    self.logger.info(f"✅ Found compose area after keyboard shortcut: {selector}")
-                                    break
-                            except:
-                                continue
-                                
-                    except Exception as e:
-                        self.logger.warning(f"⚠️ Alternative method 2 failed: {e}")
+                # X.com özel metodu dene
+                compose_element = await self.find_compose_area_x_com()
                 
                 if not compose_element:
                     self.logger.error("❌ Could not find tweet compose area with any method")
@@ -663,6 +622,115 @@ class TwitterBrowser:
         
         except Exception as e:
             self.logger.error(f"❌ Error posting tweet: {e}")
+            return False
+    
+    async def find_compose_area_x_com(self):
+        """X.com için özel compose area bulma metodu"""
+        try:
+            self.logger.info("🔍 Looking for X.com compose area...")
+            
+            # X.com'da compose area'yı açmak için farklı yöntemler dene
+            methods = [
+                # Method 1: Direct compose area
+                {
+                    'name': 'Direct compose area',
+                    'action': lambda: None,
+                    'selectors': [
+                        'div[data-testid="tweetTextarea_0"]',
+                        'div[contenteditable="true"][role="textbox"]',
+                        'div[aria-label*="Post text"]'
+                    ]
+                },
+                # Method 2: Click compose button first
+                {
+                    'name': 'Click compose button',
+                    'action': self.click_compose_button,
+                    'selectors': [
+                        'div[data-testid="tweetTextarea_0"]',
+                        'div[contenteditable="true"]'
+                    ]
+                },
+                # Method 3: Use keyboard shortcut
+                {
+                    'name': 'Keyboard shortcut',
+                    'action': self.use_compose_shortcut,
+                    'selectors': [
+                        'div[data-testid="tweetTextarea_0"]',
+                        'div[contenteditable="true"]'
+                    ]
+                }
+            ]
+            
+            for method in methods:
+                try:
+                    self.logger.info(f"🔄 Trying method: {method['name']}")
+                    
+                    # Execute method action
+                    if method['action']:
+                        await method['action']()
+                        await asyncio.sleep(2)
+                    
+                    # Try to find compose area
+                    for selector in method['selectors']:
+                        try:
+                            element = await self.page.wait_for_selector(selector, timeout=3000)
+                            if element:
+                                # Test if element is actually editable
+                                is_editable = await element.evaluate('el => el.contentEditable === "true" || el.tagName === "TEXTAREA" || el.tagName === "INPUT"')
+                                if is_editable:
+                                    self.logger.info(f"✅ Found working compose area: {selector}")
+                                    return element
+                        except:
+                            continue
+                            
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Method {method['name']} failed: {e}")
+                    continue
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error in find_compose_area_x_com: {e}")
+            return None
+
+    async def click_compose_button(self):
+        """Compose butonuna tıkla"""
+        try:
+            compose_buttons = [
+                'a[data-testid="SideNav_NewTweet_Button"]',
+                'button[data-testid="SideNav_NewTweet_Button"]',
+                'a[href="/compose/tweet"]',
+                'a[href="/compose/post"]',
+                'button[aria-label*="Post"]',
+                'button[aria-label*="Tweet"]',
+                'div[data-testid="SideNav_NewTweet_Button"]'
+            ]
+            
+            for selector in compose_buttons:
+                try:
+                    button = await self.page.wait_for_selector(selector, timeout=2000)
+                    if button:
+                        await button.click()
+                        self.logger.info(f"✅ Clicked compose button: {selector}")
+                        return True
+            except:
+                continue
+                
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error clicking compose button: {e}")
+            return False
+
+    async def use_compose_shortcut(self):
+        """Compose kısayolunu kullan"""
+        try:
+            # X.com'da 'n' tuşu compose açar
+            await self.page.keyboard.press('n')
+            self.logger.info("⌨️ Used keyboard shortcut 'n'")
+            return True
+        except Exception as e:
+            self.logger.warning(f"⚠️ Error using compose shortcut: {e}")
             return False
     
     async def reply_to_tweet(self, tweet_url, reply_content):
