@@ -22,6 +22,7 @@ class TwitterBrowser:
         self.last_login_attempt = 0
         self.login_cooldown = 1800  # 30 dakika
         self.email_handler = EmailHandler()
+        self.session_data = {}
         self.setup_logging()
         
     def setup_logging(self):
@@ -48,16 +49,32 @@ class TwitterBrowser:
         
         return True
     
-    async def initialize(self):
-        """Playwright + Chromium'u başlat"""
+    def load_session_data(self):
+        """Önceki session bilgilerini yükle"""
         try:
-            self.logger.info("🚀 Initializing Playwright + Chromium...")
+            if os.path.exists(self.session_file):
+                with open(self.session_file, 'r') as f:
+                    self.session_data = json.load(f)
+                    self.logger.info("📂 Previous session data loaded")
+                    return True
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not load session data: {e}")
+        return False
+    
+    async def initialize(self):
+        """Playwright + Chromium'u başlat - GELİŞTİRİLMİŞ SESSION MANAGEMENT"""
+        try:
+            self.logger.info("🚀 Initializing Playwright + Chromium with persistent session...")
             
             os.makedirs('data', exist_ok=True)
             os.makedirs(self.user_data_dir, exist_ok=True)
             
+            # Önceki session bilgilerini yükle
+            self.load_session_data()
+            
             self.playwright = await async_playwright().start()
             
+            # PERSISTENT CONTEXT - Session'ı korur
             self.browser = await self.playwright.chromium.launch_persistent_context(
                 user_data_dir=self.user_data_dir,
                 headless=True,  # Render için headless
@@ -80,7 +97,12 @@ class TwitterBrowser:
                     '--disable-blink-features=AutomationControlled',
                     '--disable-automation',
                     '--disable-infobars',
-                    '--start-maximized'
+                    '--start-maximized',
+                    # Session persistence için ek ayarlar
+                    '--disable-background-networking',
+                    '--disable-sync',
+                    '--disable-translate',
+                    '--disable-ipc-flooding-protection'
                 ]
             )
             
@@ -105,7 +127,7 @@ class TwitterBrowser:
             
             self.page = await self.browser.new_page()
             
-            self.logger.info("✅ Playwright + Chromium initialized!")
+            self.logger.info("✅ Playwright + Chromium initialized with persistent session!")
             return True
             
         except Exception as e:
@@ -113,42 +135,69 @@ class TwitterBrowser:
             return False
     
     async def quick_login_check(self):
-        """HIZLI login durumu kontrolü"""
+        """GÜÇLENDIRILMIŞ login durumu kontrolü"""
         try:
-            self.logger.info("⚡ Quick login check...")
+            self.logger.info("⚡ Enhanced login check...")
             
             # Home sayfasına git
             await self.page.goto("https://twitter.com/home", 
                                wait_until="domcontentloaded", 
-                               timeout=10000)
+                               timeout=15000)
             
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
             
-            # Tweet butonu var mı kontrol et
-            try:
-                element = await self.page.wait_for_selector(
-                    'a[data-testid="SideNav_NewTweet_Button"]', 
-                    timeout=3000
-                )
-                if element:
-                    self.logger.info("✅ Already logged in!")
+            # Birden fazla login indicator kontrol et
+            login_indicators = [
+                'a[data-testid="SideNav_NewTweet_Button"]',  # Tweet butonu
+                'div[data-testid="SideNav_AccountSwitcher_Button"]',  # Profil butonu
+                'nav[role="navigation"]',  # Ana navigasyon
+                'div[data-testid="primaryColumn"]',  # Ana kolon
+                'div[data-testid="tweetTextarea_0"]',  # Tweet yazma alanı
+                'aside[role="complementary"]'  # Yan panel
+            ]
+            
+            login_confirmed = False
+            for indicator in login_indicators:
+                try:
+                    element = await self.page.wait_for_selector(indicator, timeout=3000)
+                    if element:
+                        self.logger.info(f"✅ Login confirmed with indicator: {indicator}")
+                        login_confirmed = True
+                        break
+                except:
+                    continue
+            
+            if login_confirmed:
+                # URL kontrolü de yap
+                current_url = self.page.url
+                if "/home" in current_url and "login" not in current_url:
+                    self.logger.info("✅ Login confirmed by URL and elements!")
                     self.is_logged_in = True
+                    await self.save_session_info()  # Session'ı kaydet
+                    return True
+            
+            # Login sayfasında mıyız kontrol et
+            current_url = self.page.url
+            if any(path in current_url for path in ["/login", "/i/flow/login", "/oauth"]):
+                self.logger.info("❌ On login page - not logged in")
+                return False
+            
+            # Son çare: Sayfa title kontrolü
+            try:
+                title = await self.page.title()
+                if "Home" in title or "Twitter" in title:
+                    self.logger.info("✅ Login confirmed by page title!")
+                    self.is_logged_in = True
+                    await self.save_session_info()
                     return True
             except:
                 pass
-            
-            # URL kontrolü
-            current_url = self.page.url
-            if "/home" in current_url and "login" not in current_url:
-                self.logger.info("✅ Login confirmed by URL!")
-                self.is_logged_in = True
-                return True
             
             self.logger.info("❌ Not logged in")
             return False
             
         except Exception as e:
-            self.logger.warning(f"⚠️ Quick check failed: {e}")
+            self.logger.warning(f"⚠️ Enhanced login check failed: {e}")
             return False
     
     async def check_login_status(self):
@@ -268,6 +317,7 @@ class TwitterBrowser:
             if await self.quick_login_check():
                 self.logger.info("🎉 DIRECT LOGIN SUCCESSFUL!")
                 self.login_attempts = 0
+                await self.save_session_info()  # Session'ı kaydet
                 return True
             else:
                 # Bir kez daha dene
@@ -275,6 +325,7 @@ class TwitterBrowser:
                 if await self.quick_login_check():
                     self.logger.info("🎉 DIRECT LOGIN SUCCESSFUL (retry)!")
                     self.login_attempts = 0
+                    await self.save_session_info()
                     return True
                 else:
                     self.logger.error("❌ DIRECT LOGIN FAILED")
@@ -387,19 +438,27 @@ class TwitterBrowser:
         return await self.direct_login()
     
     async def save_session_info(self):
-        """Session bilgilerini kaydet"""
+        """Session bilgilerini kaydet - GELİŞTİRİLMİŞ"""
         try:
+            current_time = time.time()
+            current_url = self.page.url
+            
             session_info = {
-                'login_time': time.time(),
-                'current_url': self.page.url,
+                'login_time': current_time,
+                'last_check_time': current_time,
+                'current_url': current_url,
                 'session_active': True,
-                'login_verified': True
+                'login_verified': True,
+                'user_agent': await self.page.evaluate('navigator.userAgent'),
+                'cookies_saved': True
             }
             
+            # Session dosyasını kaydet
             with open(self.session_file, 'w') as f:
                 json.dump(session_info, f, indent=2)
             
-            self.logger.info("💾 Session saved")
+            self.session_data = session_info
+            self.logger.info("💾 Enhanced session saved")
             return True
         except Exception as e:
             self.logger.error(f"❌ Error saving session: {e}")
