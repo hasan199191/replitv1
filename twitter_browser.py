@@ -228,7 +228,7 @@ class TwitterBrowser:
             await asyncio.sleep(2)
             
             # 1. USERNAME GİR
-            username = os.environ.get('TWITTER_USERNAME') or os.environ.get('EMAIL_USER')
+            username = os.environ.get('TWITTER_USERNAME') or os.environ.get('EMAIL_ADDRESS')
             self.logger.info(f"⚡ Entering username: {username}")
             
             # Username alanını bul ve doldur
@@ -255,26 +255,78 @@ class TwitterBrowser:
             # 2. USERNAME VERIFICATION (varsa)
             await self.handle_username_verification()
             
-            # 3. PASSWORD GİR - DİREKT YAKLAŞIM
+            # 3. PASSWORD GİR - GELİŞTİRİLMİŞ YAKLAŞIM
             password = os.environ.get('TWITTER_PASSWORD')
             self.logger.info("⚡ Looking for password field...")
-            
-            # Password alanını bekle ve direkt doldur
-            try:
-                # Kısa timeout ile password alanını bekle
-                await self.page.wait_for_selector('input[type="password"]', timeout=8000)
-                
-                # Direkt password'u yaz (click yapmadan)
-                await self.page.fill('input[type="password"]', password)
-                self.logger.info("⚡ Password entered directly")
-                
-                # Hemen Enter tuşuna bas
-                await self.page.keyboard.press('Enter')
-                self.logger.info("⚡ Enter pressed for login")
-                
-            except Exception as e:
-                self.logger.error(f"❌ Password field error: {e}")
+
+            # Password alanını bekle - daha fazla selector ile
+            password_selectors = [
+                'input[type="password"]',
+                'input[name="password"]',
+                'input[autocomplete="current-password"]',
+                'input[data-testid="ocfPasswordInput"]',
+                'input[placeholder*="password"]',
+                'input[placeholder*="Password"]'
+            ]
+
+            password_found = False
+            for selector in password_selectors:
+                try:
+                    self.logger.info(f"🔍 Trying password selector: {selector}")
+                    password_element = await self.page.wait_for_selector(selector, timeout=5000)
+                    
+                    if password_element:
+                        # Password alanını temizle ve doldur
+                        await password_element.click()
+                        await asyncio.sleep(1)
+                        await password_element.fill('')  # Temizle
+                        await password_element.fill(password)
+                        self.logger.info("⚡ Password entered successfully")
+                        
+                        # Enter tuşuna bas
+                        await self.page.keyboard.press('Enter')
+                        self.logger.info("⚡ Enter pressed for login")
+                        password_found = True
+                        break
+                        
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Password selector {selector} failed: {e}")
+                    continue
+
+            if not password_found:
+                self.logger.error("❌ Could not find password field with any selector")
                 return False
+            
+            # Login sonrası daha uzun bekleme ve debug
+            await asyncio.sleep(5)
+
+            # Sayfanın mevcut durumunu kontrol et
+            try:
+                current_url = self.page.url
+                page_title = await self.page.title()
+                self.logger.info(f"🔍 After login attempt - URL: {current_url}")
+                self.logger.info(f"🔍 After login attempt - Title: {page_title}")
+                
+                # Hata mesajı var mı kontrol et
+                error_selectors = [
+                    'div[data-testid="error"]',
+                    'div[role="alert"]',
+                    'span[data-testid="error"]',
+                    '.error',
+                    '[data-testid="loginError"]'
+                ]
+                
+                for error_selector in error_selectors:
+                    try:
+                        error_element = await self.page.wait_for_selector(error_selector, timeout=2000)
+                        if error_element:
+                            error_text = await error_element.inner_text()
+                            self.logger.warning(f"⚠️ Login error detected: {error_text}")
+                    except:
+                        continue
+                        
+            except Exception as debug_error:
+                self.logger.warning(f"⚠️ Debug info failed: {debug_error}")
             
             # Login sonrası kısa bekleme
             await asyncio.sleep(3)
