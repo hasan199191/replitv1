@@ -105,6 +105,9 @@ async def main():
             if not await twitter.login():
                 raise Exception("Twitter login failed")
             
+            # Login durumunu set et
+            twitter.is_logged_in = True
+            
             logging.info("✅ All components initialized successfully!")
             break
             
@@ -131,6 +134,16 @@ async def main():
     while True:
         try:
             logging.info("🔄 Starting new cycle...")
+            
+            # Login durumunu kontrol et (sadece gerekirse)
+            if not twitter.is_logged_in:
+                logging.info("🔍 Checking login status before cycle...")
+                if not await twitter.quick_login_check():
+                    logging.warning("⚠️ Login lost, attempting re-login...")
+                    if not await twitter.login():
+                        logging.error("❌ Re-login failed, skipping cycle")
+                        await asyncio.sleep(300)  # 5 dakika bekle
+                        continue
             
             # 1. Post project content
             try:
