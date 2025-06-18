@@ -473,28 +473,93 @@ class TwitterBrowser:
             self.logger.info(f"🧵 Sending thread with {len(tweets)} tweets")
             
             # Compose sayfasına git
-            await self.page.goto("https://x.com/compose/tweet", timeout=30000)
+            # Compose sayfasına git - YENİ URL
+            compose_urls = [
+                "https://x.com/compose/post",
+                "https://x.com/compose/tweet", 
+                "https://x.com/home"
+            ]
+
+            compose_success = False
+            for url in compose_urls:
+                try:
+                    await self.page.goto(url, timeout=30000)
+                    await asyncio.sleep(4)
+                    
+                    # Sayfa yüklendiğini kontrol et
+                    if "compose" in self.page.url or "home" in self.page.url:
+                        self.logger.info(f"✅ Successfully navigated to: {url}")
+                        compose_success = True
+                        break
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Failed to navigate to {url}: {e}")
+                    continue
+
+            if not compose_success:
+                self.logger.error("❌ Could not navigate to compose page")
+                return False
+
+            # Tweet butonu varsa tıkla (home sayfasındaysak)
+            if "home" in self.page.url:
+                try:
+                    tweet_button = await self.page.wait_for_selector('a[data-testid="SideNav_NewTweet_Button"]', timeout=5000)
+                    if tweet_button:
+                        await tweet_button.click()
+                        await asyncio.sleep(3)
+                        self.logger.info("✅ Clicked tweet button from home")
+                except:
+                    pass
             await asyncio.sleep(4)
             
             # İlk tweet'i yaz
+            # İlk tweet'i yaz - GÜNCEL SELECTOR'LAR
             first_tweet_selectors = [
                 'div[data-testid="tweetTextarea_0"]',
-                'div[contenteditable="true"][aria-label*="Tweet"]',
-                'div[role="textbox"]'
+                'div[contenteditable="true"][data-testid="tweetTextarea_0"]',
+                'div[contenteditable="true"][aria-label*="Post"]',
+                'div[contenteditable="true"][aria-label*="What"]',
+                'div[role="textbox"][contenteditable="true"]',
+                'div[data-testid="dmComposerTextInput"]',
+                '.public-DraftEditor-content',
+                'div[aria-label="Post text"]'
             ]
             
             first_tweet_area = None
-            for selector in first_tweet_selectors:
+            for i, selector in enumerate(first_tweet_selectors):
                 try:
+                    self.logger.info(f"🔍 Trying selector {i+1}/{len(first_tweet_selectors)}: {selector}")
                     first_tweet_area = await self.page.wait_for_selector(selector, timeout=5000)
                     if first_tweet_area:
-                        self.logger.info(f"✅ Found first tweet area: {selector}")
-                        break
-                except:
+                        # Element görünür mü kontrol et
+                        is_visible = await first_tweet_area.is_visible()
+                        if is_visible:
+                            self.logger.info(f"✅ Found visible tweet area: {selector}")
+                            break
+                        else:
+                            self.logger.warning(f"⚠️ Found but not visible: {selector}")
+                            first_tweet_area = None
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Selector failed {selector}: {e}")
                     continue
-            
+
             if not first_tweet_area:
-                self.logger.error("❌ Could not find first tweet area")
+                # Debug: Sayfadaki tüm input alanlarını listele
+                self.logger.error("❌ Could not find tweet area. Debugging page elements...")
+                try:
+                    all_inputs = await self.page.query_selector_all('div[contenteditable="true"], textarea, input[type="text"]')
+                    self.logger.info(f"📋 Found {len(all_inputs)} input elements on page")
+                    
+                    for i, input_elem in enumerate(all_inputs[:5]):  # İlk 5'ini kontrol et
+                        try:
+                            tag_name = await input_elem.evaluate('el => el.tagName')
+                            aria_label = await input_elem.get_attribute('aria-label') or 'No aria-label'
+                            data_testid = await input_elem.get_attribute('data-testid') or 'No data-testid'
+                            self.logger.info(f"   Input {i+1}: {tag_name}, aria-label='{aria_label}', data-testid='{data_testid}'")
+                        except:
+                            continue
+                except Exception as e:
+                    self.logger.error(f"❌ Debug failed: {e}")
+                
                 return False
             
             # İlk tweet'i yaz
