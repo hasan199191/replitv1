@@ -517,30 +517,51 @@ class TwitterBrowser:
             await asyncio.sleep(5)
 
             # Tweet butonuna tıkla
+            # Tweet butonuna tıkla - GENİŞLETİLMİŞ SELECTOR'LAR
             self.logger.info("🔍 Looking for tweet button...")
             tweet_button_selectors = [
-                'a[data-testid="SideNav_NewTweet_Button"]',
-                'div[data-testid="SideNav_NewTweet_Button"]',
-                'button[data-testid="SideNav_NewTweet_Button"]',
-                '[aria-label="Post"]',
-                '[aria-label="Tweet"]'
+                'a[data-testid="SideNav_NewTweet_Button"]',  # Klasik selector
+                'div[data-testid="SideNav_NewTweet_Button"]',  # Div versiyonu
+                'button[data-testid="SideNav_NewTweet_Button"]',  # Button versiyonu
+                '[aria-label="Post"]',  # Post label
+                '[aria-label="Tweet"]',  # Tweet label
+                '[aria-label="Compose post"]',  # Compose post
+                '[data-testid="tweetButton"]',  # Tweet button
+                '[data-testid="tweetButtonInline"]',  # Inline tweet button
+                'a[href="/compose/tweet"]',  # Compose link
+                'a[href="/compose/post"]',  # Compose post link
+                'div[role="button"][aria-label*="Tweet"]',  # Role button with Tweet
+                'div[role="button"][aria-label*="Post"]',  # Role button with Post
+                'button[aria-label*="Tweet"]',  # Button with Tweet
+                'button[aria-label*="Post"]',  # Button with Post
+                '.r-1cvl2hr[role="button"]',  # CSS class based
+                '[data-testid*="tweet"]',  # Any testid containing tweet
+                '[data-testid*="post"]'   # Any testid containing post
             ]
 
             tweet_button_found = False
-            for selector in tweet_button_selectors:
+            for i, selector in enumerate(tweet_button_selectors):
                 try:
-                    tweet_button = await self.page.wait_for_selector(selector, timeout=5000)
+                    self.logger.info(f"🔍 Trying tweet button selector {i+1}/{len(tweet_button_selectors)}: {selector}")
+                    tweet_button = await self.page.wait_for_selector(selector, timeout=3000)
                     if tweet_button:
-                        self.logger.info(f"✅ Found tweet button: {selector}")
-                        await tweet_button.click()
-                        await asyncio.sleep(4)
-                        tweet_button_found = True
-                        break
-                except:
+                        # Element görünür mü kontrol et
+                        is_visible = await tweet_button.is_visible()
+                        if is_visible:
+                            self.logger.info(f"✅ Found visible tweet button: {selector}")
+                            await tweet_button.click()
+                            await asyncio.sleep(4)
+                            tweet_button_found = True
+                            break
+                        else:
+                            self.logger.warning(f"⚠️ Found but not visible: {selector}")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Selector failed {selector}: {e}")
                     continue
 
             if not tweet_button_found:
-                self.logger.error("❌ Could not find tweet button")
+                self.logger.error("❌ Could not find tweet button - running debug analysis...")
+                await self.debug_page_elements()
                 return False
 
             self.logger.info("✅ Tweet compose modal should be open")
@@ -1022,43 +1043,79 @@ class TwitterBrowser:
         """Debug: Sayfadaki elementleri analiz et"""
         try:
             self.logger.info("🔍 DEBUG: Analyzing page elements...")
-            
+        
             # Sayfa URL'i
             current_url = self.page.url
             self.logger.info(f"📍 Current URL: {current_url}")
-            
+        
             # Sayfa başlığı
             title = await self.page.title()
             self.logger.info(f"📄 Page title: {title}")
-            
-            # Tüm contenteditable elementler
-            editable_elements = await self.page.query_selector_all('[contenteditable="true"]')
-            self.logger.info(f"✏️ Found {len(editable_elements)} contenteditable elements")
-            
-            for i, elem in enumerate(editable_elements[:5]):
+        
+            # Tüm data-testid elementler
+            testid_elements = await self.page.query_selector_all('[data-testid]')
+            self.logger.info(f"🏷️ Found {len(testid_elements)} elements with data-testid")
+        
+            tweet_related_testids = []
+            for elem in testid_elements:
                 try:
-                    aria_label = await elem.get_attribute('aria-label') or 'No aria-label'
-                    data_testid = await elem.get_attribute('data-testid') or 'No data-testid'
-                    role = await elem.get_attribute('role') or 'No role'
-                    tag_name = await elem.evaluate('el => el.tagName')
-                    self.logger.info(f"   Element {i+1}: {tag_name}, aria-label='{aria_label}', data-testid='{data_testid}', role='{role}'")
+                    testid = await elem.get_attribute('data-testid')
+                    if testid and ('tweet' in testid.lower() or 'post' in testid.lower() or 'compose' in testid.lower()):
+                        tweet_related_testids.append(testid)
                 except:
                     continue
-            
+        
+            if tweet_related_testids:
+                self.logger.info(f"🐦 Tweet-related testids found: {tweet_related_testids}")
+        
+            # Tüm aria-label elementler
+            aria_elements = await self.page.query_selector_all('[aria-label]')
+            self.logger.info(f"🏷️ Found {len(aria_elements)} elements with aria-label")
+        
+            tweet_related_arias = []
+            for elem in aria_elements:
+                try:
+                    aria_label = await elem.get_attribute('aria-label')
+                    if aria_label and ('tweet' in aria_label.lower() or 'post' in aria_label.lower() or 'compose' in aria_label.lower()):
+                        tweet_related_arias.append(aria_label)
+                except:
+                    continue
+        
+            if tweet_related_arias:
+                self.logger.info(f"🐦 Tweet-related aria-labels found: {tweet_related_arias}")
+        
+            # Tüm link elementler
+            links = await self.page.query_selector_all('a[href]')
+            self.logger.info(f"🔗 Found {len(links)} link elements")
+        
+            compose_links = []
+            for link in links:
+                try:
+                    href = await link.get_attribute('href')
+                    if href and ('compose' in href or 'tweet' in href or 'post' in href):
+                        compose_links.append(href)
+                except:
+                    continue
+        
+            if compose_links:
+                self.logger.info(f"✍️ Compose-related links found: {compose_links}")
+        
             # Tüm button elementler
             buttons = await self.page.query_selector_all('button, div[role="button"], a[role="button"]')
             self.logger.info(f"🔘 Found {len(buttons)} button elements")
-            
-            # Tweet ile ilgili elementler
-            tweet_elements = await self.page.query_selector_all('[data-testid*="tweet"], [aria-label*="Tweet"], [aria-label*="Post"]')
-            self.logger.info(f"🐦 Found {len(tweet_elements)} tweet-related elements")
-            
-            for i, elem in enumerate(tweet_elements[:3]):
+        
+            # Navigation elementleri
+            nav_elements = await self.page.query_selector_all('nav, [role="navigation"]')
+            self.logger.info(f"🧭 Found {len(nav_elements)} navigation elements")
+        
+            # Sidebar elementleri
+            sidebar_elements = await self.page.query_selector_all('[data-testid*="sidebar"], [data-testid*="nav"]')
+            self.logger.info(f"📋 Found {len(sidebar_elements)} sidebar/nav elements")
+        
+            for i, elem in enumerate(sidebar_elements[:3]):
                 try:
-                    aria_label = await elem.get_attribute('aria-label') or 'No aria-label'
-                    data_testid = await elem.get_attribute('data-testid') or 'No data-testid'
-                    tag_name = await elem.evaluate('el => el.tagName')
-                    self.logger.info(f"   Tweet element {i+1}: {tag_name}, aria-label='{aria_label}', data-testid='{data_testid}'")
+                    testid = await elem.get_attribute('data-testid') or 'No testid'
+                    self.logger.info(f"   Sidebar {i+1}: data-testid='{testid}'")
                 except:
                     continue
                 
