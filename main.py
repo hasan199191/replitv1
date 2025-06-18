@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import google.generativeai as genai
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth
 import imaplib
 import email
 from advanced_content_generator import AdvancedContentGenerator  # <-- Yeni import
