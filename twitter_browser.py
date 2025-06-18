@@ -713,8 +713,8 @@ class TwitterBrowser:
                         await button.click()
                         self.logger.info(f"✅ Clicked compose button: {selector}")
                         return True
-            except:
-                continue
+                except:
+                    continue
                 
             return False
             
