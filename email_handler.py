@@ -9,8 +9,9 @@ from typing import Optional
 class EmailHandler:
     def __init__(self):
         self.email_user = "hasanacikgoz91@gmail.com"
-        # Gmail App Password kullan (normal şifre değil)
-        self.email_pass = os.environ.get('GMAIL_APP_PASSWORD') or os.environ.get('EMAIL_PASS') or "Nuray1965+"
+        # Gmail App Password - boşlukları kaldır
+        raw_password = os.environ.get('GMAIL_APP_PASSWORD') or os.environ.get('EMAIL_PASS') or "Nuray1965+"
+        self.email_pass = raw_password.replace(' ', '') if raw_password else None
         self.imap_server = "imap.gmail.com"
         self.imap_port = 993
         self.logger = logging.getLogger('EmailHandler')
@@ -25,7 +26,7 @@ class EmailHandler:
             self.logger.addHandler(handler)
     
     def get_twitter_verification_code(self, timeout=120) -> Optional[str]:
-        """Twitter'dan gelen doğrulama kodunu email'den al - APP PASSWORD DESTEKLİ"""
+        """Twitter'dan gelen doğrulama kodunu email'den al - DÜZELTİLMİŞ SEARCH"""
         try:
             # Gmail App Password kontrolü
             if not self.email_pass:
@@ -33,7 +34,7 @@ class EmailHandler:
                 return None
             
             # App Password kullanıldığını belirt
-            if len(self.email_pass) == 16 and ' ' not in self.email_pass:
+            if len(self.email_pass) == 16 and self.email_pass.isalnum():
                 self.logger.info("🔐 Using Gmail App Password for authentication")
             else:
                 self.logger.warning("⚠️ Using regular password - App Password recommended!")
@@ -68,41 +69,55 @@ class EmailHandler:
                     
                     mail.select('inbox')
                 
-                    # Son 15 dakikadaki Twitter emaillerini ara (daha geniş arama)
-                    search_criteria = '(FROM "verify@twitter.com" OR FROM "info@twitter.com" OR FROM "noreply@twitter.com" OR FROM "account@twitter.com" OR FROM "security@twitter.com" OR SUBJECT "Twitter" OR SUBJECT "verification" OR SUBJECT "code") SINCE "' + time.strftime('%d-%b-%Y', time.gmtime(time.time() - 900)) + '"'
-                
-                    result, data = mail.search(None, search_criteria)
-                
+                    # BASİT SEARCH - Son 50 email'i al
+                    self.logger.info("🔍 Searching for recent emails...")
+                    
+                    # Önce tüm email'leri al (son 50)
+                    result, data = mail.search(None, 'ALL')
+                    
                     if data[0]:
                         email_ids = data[0].split()
-                    
-                        # En son email'leri kontrol et (son 20 email)
-                        for email_id in reversed(email_ids[-20:]):
-                            result, data = mail.fetch(email_id, '(RFC822)')
                         
-                            if data[0]:
-                                email_message = email.message_from_bytes(data[0][1])
+                        # Son 50 email'i kontrol et
+                        recent_emails = email_ids[-50:] if len(email_ids) > 50 else email_ids
+                        
+                        self.logger.info(f"📧 Checking {len(recent_emails)} recent emails...")
+                        
+                        # En son email'leri kontrol et
+                        for email_id in reversed(recent_emails):
+                            try:
+                                result, data = mail.fetch(email_id, '(RFC822)')
                             
-                                # Email konusunu kontrol et
-                                subject = email_message.get('Subject', '')
-                                sender = email_message.get('From', '')
-                                self.logger.info(f"📧 Checking email from {sender}: {subject}")
-                            
-                                # Twitter doğrulama email'i mi?
-                                if any(keyword in subject.lower() for keyword in ['verification', 'confirm', 'code', 'verify', 'security', 'login', 'twitter']) or any(domain in sender.lower() for domain in ['twitter.com', 'x.com']):
+                                if data[0]:
+                                    email_message = email.message_from_bytes(data[0][1])
                                 
-                                    # Email içeriğini al
-                                    body = self.get_email_body(email_message)
-                                
-                                    if body:
-                                        # Doğrulama kodunu bul
-                                        verification_code = self.extract_verification_code(body)
+                                    # Email konusunu kontrol et
+                                    subject = email_message.get('Subject', '')
+                                    sender = email_message.get('From', '')
+                                    date = email_message.get('Date', '')
                                     
-                                        if verification_code:
-                                            self.logger.info(f"✅ Found Twitter verification code: {verification_code}")
-                                            mail.close()
-                                            mail.logout()
-                                            return verification_code
+                                    # Twitter/X email'i mi kontrol et
+                                    is_twitter_email = any(domain in sender.lower() for domain in ['twitter.com', 'x.com']) or \
+                                                     any(keyword in subject.lower() for keyword in ['twitter', 'x confirmation', 'verification', 'confirm', 'code', 'verify', 'security', 'login'])
+                                    
+                                    if is_twitter_email:
+                                        self.logger.info(f"📧 Found Twitter email from {sender}: {subject}")
+                                    
+                                        # Email içeriğini al
+                                        body = self.get_email_body(email_message)
+                                    
+                                        if body:
+                                            # Doğrulama kodunu bul
+                                            verification_code = self.extract_verification_code(body)
+                                        
+                                            if verification_code:
+                                                self.logger.info(f"✅ Found Twitter verification code: {verification_code}")
+                                                mail.close()
+                                                mail.logout()
+                                                return verification_code
+                            except Exception as email_error:
+                                self.logger.warning(f"⚠️ Error processing email {email_id}: {email_error}")
+                                continue
                 
                     mail.close()
                     mail.logout()
@@ -148,76 +163,87 @@ class EmailHandler:
             return ""
     
     def extract_verification_code(self, email_body):
-        """Email içeriğinden doğrulama kodunu çıkar - GELİŞTİRİLMİŞ"""
+        """Email içeriğinden doğrulama kodunu çıkar - X FORMAT DESTEKLİ"""
         try:
-            # Farklı doğrulama kodu formatları - daha kapsamlı
+            # X/Twitter'ın yeni formatları dahil
             patterns = [
-                r'verification code[:\s]*([0-9]{6})',  # verification code: 123456
-                r'confirmation code[:\s]*([0-9]{6})',  # confirmation code: 123456
-                r'security code[:\s]*([0-9]{6})',      # security code: 123456
-                r'login code[:\s]*([0-9]{6})',         # login code: 123456
-                r'code[:\s]*([0-9]{6})',               # code: 123456
-                r'confirm[:\s]*([0-9]{6})',            # confirm: 123456
-                r'verify[:\s]*([0-9]{6})',             # verify: 123456
-                r'([0-9]{6})',                         # sadece 6 haneli sayı
-                r'verification code[:\s]*([0-9]{4})',  # 4 haneli kod
-                r'code[:\s]*([0-9]{4})',               # 4 haneli kod
-                r'([0-9]{4})',                         # sadece 4 haneli sayı
-                r'([0-9]{8})',                         # 8 haneli kod
+                # X/Twitter spesifik formatlar
+                r'Your X confirmation code is[:\s]*([a-zA-Z0-9]{8})',  # Your X confirmation code is 6saz54wc
+                r'confirmation code is[:\s]*([a-zA-Z0-9]{8})',        # confirmation code is 6saz54wc
+                r'single-use code[:\s]*([a-zA-Z0-9]{8})',             # single-use code 6saz54wc
+                r'code[:\s]*([a-zA-Z0-9]{8})',                        # code 6saz54wc
+                
+                # Geleneksel formatlar
+                r'verification code[:\s]*([0-9]{6})',                 # verification code: 123456
+                r'confirmation code[:\s]*([0-9]{6})',                 # confirmation code: 123456
+                r'security code[:\s]*([0-9]{6})',                     # security code: 123456
+                r'login code[:\s]*([0-9]{6})',                        # login code: 123456
+                r'code[:\s]*([0-9]{6})',                              # code: 123456
+                r'confirm[:\s]*([0-9]{6})',                           # confirm: 123456
+                r'verify[:\s]*([0-9]{6})',                            # verify: 123456
+                
+                # Farklı uzunluklar
+                r'([0-9]{6})',                                        # sadece 6 haneli sayı
+                r'([0-9]{4})',                                        # sadece 4 haneli sayı
+                r'([0-9]{8})',                                        # sadece 8 haneli sayı
+                r'([a-zA-Z0-9]{8})',                                  # 8 karakterli alfanumerik
+                
                 # HTML formatları
-                r'<.*?>([0-9]{6})<.*?>',               # HTML tag içinde 6 haneli
-                r'<.*?>([0-9]{4})<.*?>',               # HTML tag içinde 4 haneli
+                r'<.*?>([a-zA-Z0-9]{8})<.*?>',                        # HTML tag içinde 8 karakter
+                r'<.*?>([0-9]{6})<.*?>',                              # HTML tag içinde 6 haneli
+                r'<.*?>([0-9]{4})<.*?>',                              # HTML tag içinde 4 haneli
+                
                 # Özel Twitter formatları
-                r'Your Twitter confirmation code is[:\s]*([0-9]{6})',
-                r'Your verification code is[:\s]*([0-9]{6})',
-                r'Enter this code[:\s]*([0-9]{6})',
+                r'Your Twitter confirmation code is[:\s]*([a-zA-Z0-9]{6,8})',
+                r'Your verification code is[:\s]*([a-zA-Z0-9]{6,8})',
+                r'Enter this code[:\s]*([a-zA-Z0-9]{6,8})',
             ]
         
             email_lower = email_body.lower()
+            original_body = email_body  # Orijinal case'i korumak için
         
-            # Önce spesifik Twitter pattern'lerini dene
-            twitter_patterns = [
-                r'your twitter confirmation code is[:\s]*([0-9]{6})',
-                r'your verification code is[:\s]*([0-9]{6})',
-                r'enter this code[:\s]*([0-9]{6})',
-                r'verification code[:\s]*([0-9]{6})',
+            # Önce X/Twitter spesifik pattern'lerini dene
+            x_patterns = [
+                r'your x confirmation code is[:\s]*([a-zA-Z0-9]{8})',
+                r'confirmation code is[:\s]*([a-zA-Z0-9]{8})',
+                r'single-use code[:\s]*([a-zA-Z0-9]{8})',
             ]
         
-            for pattern in twitter_patterns:
+            for pattern in x_patterns:
                 matches = re.findall(pattern, email_lower, re.IGNORECASE)
                 if matches:
                     code = matches[0]
-                    if len(code) in [4, 6, 8]:
-                        self.logger.info(f"✅ Found code with Twitter pattern: {pattern}")
+                    if len(code) in [6, 8]:
+                        self.logger.info(f"✅ Found X/Twitter code with pattern: {pattern}")
                         return code
         
-            # Sonra genel pattern'leri dene
+            # Orijinal body'de de ara (case sensitive)
             for pattern in patterns:
-                matches = re.findall(pattern, email_lower, re.IGNORECASE)
+                matches = re.findall(pattern, original_body, re.IGNORECASE)
             
                 if matches:
-                    # En uzun kodu al (genellikle doğrulama kodu)
-                    code = max(matches, key=len)
-                
-                    # Kod uzunluğu kontrolü
-                    if len(code) in [4, 6, 8]:
-                        self.logger.info(f"✅ Found code with pattern: {pattern}")
-                        return code
+                    # En uygun kodu seç
+                    for code in matches:
+                        if len(code) in [4, 6, 8]:
+                            # Alfanumerik kodları tercih et (X'in yeni formatı)
+                            if re.match(r'^[a-zA-Z0-9]+$', code):
+                                self.logger.info(f"✅ Found code with pattern: {pattern}")
+                                return code
         
-            # Son çare: email body'de tüm sayıları bul ve en uygun olanı seç
-            all_numbers = re.findall(r'\b([0-9]{4,8})\b', email_body)
-            if all_numbers:
-                # 6 haneli olanları tercih et
-                six_digit = [num for num in all_numbers if len(num) == 6]
+            # Son çare: email body'de tüm alfanumerik kodları bul
+            all_codes = re.findall(r'\b([a-zA-Z0-9]{6,8})\b', original_body)
+            if all_codes:
+                # 8 karakterli alfanumerik olanları tercih et (X formatı)
+                eight_char = [code for code in all_codes if len(code) == 8 and re.match(r'^[a-zA-Z0-9]+$', code)]
+                if eight_char:
+                    self.logger.info("✅ Found 8-character alphanumeric code in fallback search")
+                    return eight_char[0]
+                
+                # 6 haneli olanları dene
+                six_digit = [code for code in all_codes if len(code) == 6]
                 if six_digit:
-                    self.logger.info("✅ Found 6-digit code in fallback search")
+                    self.logger.info("✅ Found 6-character code in fallback search")
                     return six_digit[0]
-            
-                # 4 haneli olanları dene
-                four_digit = [num for num in all_numbers if len(num) == 4]
-                if four_digit:
-                    self.logger.info("✅ Found 4-digit code in fallback search")
-                    return four_digit[0]
         
             return None
         
