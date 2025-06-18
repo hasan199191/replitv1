@@ -261,32 +261,32 @@ class AdvancedContentGenerator:
                     line = re.sub(r'^Tweet\s*\d+:\s*', '', line, flags=re.IGNORECASE)
                     if line and len(line) > 10:  # Minimum meaningful content
                         cleaned_lines.append(line)
-            
-            # Ensure each tweet fits character limit
-            final_tweets = []
-            for tweet in cleaned_lines:
-                if len(tweet) > 280:
-                    tweet = tweet[:277] + "..."
-                final_tweets.append(tweet)
-            
-            # Limit to maximum 3 tweets
-            final_tweets = final_tweets[:3]
-            
-            if final_tweets:
-                logging.info(f"Generated thread with {len(final_tweets)} tweets for: {project['name']}")
-                for i, tweet in enumerate(final_tweets):
-                    logging.info(f"Tweet {i+1}: {tweet}")
-                return final_tweets
+                
+                # Ensure each tweet fits character limit
+                final_tweets = []
+                for tweet in cleaned_lines:
+                    if len(tweet) > 280:
+                        tweet = tweet[:277] + "..."
+                    final_tweets.append(tweet)
+                
+                # Limit to maximum 3 tweets
+                final_tweets = final_tweets[:3]
+                
+                if final_tweets:
+                    logging.info(f"Generated thread with {len(final_tweets)} tweets for: {project['name']}")
+                    for i, tweet in enumerate(final_tweets):
+                        logging.info(f"Tweet {i+1}: {tweet}")
+                    return final_tweets
+                else:
+                    logging.error(f"Failed to create valid thread for: {project['name']}")
+                    return None
             else:
-                logging.error(f"Failed to create valid thread for: {project['name']}")
+                logging.error(f"Failed to generate content for: {project['name']}")
                 return None
-        else:
-            logging.error(f"Failed to generate content for: {project['name']}")
+                
+        except Exception as e:
+            logging.error(f"Error generating project content: {e}")
             return None
-            
-    except Exception as e:
-        logging.error(f"Error generating project content: {e}")
-        return None
     
     async def generate_reply(self, tweet_data: Dict) -> Optional[str]:
         """Generate analytical reply to a tweet - RETURNS STRING"""
@@ -299,59 +299,59 @@ class AdvancedContentGenerator:
             for keyword in self.keywords:
                 if keyword.lower() in tweet_text.lower():
                     found_keywords.append(keyword)
-        
-        # Determine tweet category
-        tweet_category = self.categorize_tweet(tweet_text, found_keywords)
-        
-        prompt = f"""
-        You are a seasoned Web3 researcher engaging in a Twitter discussion. You're known for thoughtful, analytical responses.
-        
-        Tweet Context:
-        - Author: @{username}
-        - Content: "{tweet_text}"
-        - Detected topics: {', '.join(found_keywords) if found_keywords else 'General Web3/crypto'}
-        - Category: {tweet_category}
-        
-        Create a valuable reply that:
-        - Provides unique insight or perspective
-        - References specific protocols/metrics when relevant
-        - Uses technical terminology naturally
-        - Avoids generic responses
-        - Is genuinely helpful to the conversation
-        
-        Maximum 270 characters. Return ONLY the reply text, no quotes or formatting.
-        """
-        
-        response = self.model.generate_content(prompt)
-        
-        if response.text:
-            reply = response.text.strip()
             
-            # Clean formatting
-            if reply.startswith('"') and reply.endswith('"'):
-                reply = reply[1:-1]
+            # Determine tweet category
+            tweet_category = self.categorize_tweet(tweet_text, found_keywords)
             
-            # Remove any prefixes
-            reply = re.sub(r'^Reply:\s*', '', reply, flags=re.IGNORECASE)
-            reply = re.sub(r'^Response:\s*', '', reply, flags=re.IGNORECASE)
+            prompt = f"""
+            You are a seasoned Web3 researcher engaging in a Twitter discussion. You're known for thoughtful, analytical responses.
             
-            # Ensure character limit
-            if len(reply) > 280:
-                reply = reply[:277] + "..."
+            Tweet Context:
+            - Author: @{username}
+            - Content: "{tweet_text}"
+            - Detected topics: {', '.join(found_keywords) if found_keywords else 'General Web3/crypto'}
+            - Category: {tweet_category}
             
-            if len(reply) > 10:  # Minimum meaningful content
-                logging.info(f"Generated reply for @{username}: {reply}")
-                return reply
+            Create a valuable reply that:
+            - Provides unique insight or perspective
+            - References specific protocols/metrics when relevant
+            - Uses technical terminology naturally
+            - Avoids generic responses
+            - Is genuinely helpful to the conversation
+            
+            Maximum 270 characters. Return ONLY the reply text, no quotes or formatting.
+            """
+            
+            response = self.model.generate_content(prompt)
+            
+            if response.text:
+                reply = response.text.strip()
+                
+                # Clean formatting
+                if reply.startswith('"') and reply.endswith('"'):
+                    reply = reply[1:-1]
+                
+                # Remove any prefixes
+                reply = re.sub(r'^Reply:\s*', '', reply, flags=re.IGNORECASE)
+                reply = re.sub(r'^Response:\s*', '', reply, flags=re.IGNORECASE)
+                
+                # Ensure character limit
+                if len(reply) > 280:
+                    reply = reply[:277] + "..."
+                
+                if len(reply) > 10:  # Minimum meaningful content
+                    logging.info(f"Generated reply for @{username}: {reply}")
+                    return reply
+                else:
+                    logging.error(f"Reply too short for @{username}")
+                    return None
             else:
-                logging.error(f"Reply too short for @{username}")
+                logging.error(f"Failed to generate reply for @{username}")
                 return None
-        else:
-            logging.error(f"Failed to generate reply for @{username}")
+                
+        except Exception as e:
+            logging.error(f"Error generating reply: {e}")
             return None
-            
-    except Exception as e:
-        logging.error(f"Error generating reply: {e}")
-        return None
     
     def categorize_tweet(self, tweet_text: str, keywords: List[str]) -> str:
         """Categorize tweet based on content"""
