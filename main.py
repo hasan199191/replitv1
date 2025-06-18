@@ -9,10 +9,9 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import google.generativeai as genai
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth
 import imaplib
 import email
-from advanced_content_generator import AdvancedContentGenerator  # <-- Yeni import
+from advanced_content_generator import AdvancedContentGenerator
 
 # Windows konsol kodlama sorununu çöz
 if sys.platform == "win32":
@@ -113,158 +112,6 @@ class EmailHandler:
             logging.error(f"❌ Gmail bağlantı hatası: {e}")
             return None
 
-class ContentGenerator:
-    def __init__(self):
-        self.model = None
-        
-    def initialize(self):
-        try:
-            gemini_api_key = os.getenv('GEMINI_API_KEY')
-            if not gemini_api_key:
-                logging.error("Error initializing Gemini Flash 2.0: Gemini API key not found")
-                return False
-                
-            genai.configure(api_key=gemini_api_key)
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            logging.info("Advanced Gemini Flash 2.0 successfully initialized")
-            return True
-            
-        except Exception as e:
-            logging.error(f"Error initializing Gemini: {e}")
-            return False
-            
-    def generate_project_content(self, projects):
-        """2 rastgele proje için temiz İngilizce içerik oluştur"""
-        try:
-            if not projects or len(projects) < 2:
-                logging.error("Projeler listesi 2'den az! İçerik üretilemiyor.")
-                return None, None
-            selected_projects = random.sample(projects, 2)
-            
-            prompt = f"""
-Create engaging English Twitter content about these 2 crypto projects:
-
-1. {selected_projects[0]['name']} ({selected_projects[0]['twitter']})
-   - Category: {selected_projects[0]['category']}
-   - Website: {selected_projects[0]['website']}
-
-2. {selected_projects[1]['name']} ({selected_projects[1]['twitter']})
-   - Category: {selected_projects[1]['category']}
-   - Website: {selected_projects[1]['website']}
-
-IMPORTANT RULES:
-- Write ONLY in English
-- NO prefixes like "Tweet 1:", "Tweet 2:" etc.
-- Use plain text only, no special characters
-- Start content directly about the projects
-- Tag both projects properly with their handles
-- Each sentence must be complete
-- Be informative and engaging
-- Use hashtags: #DeFi #Web3 #Crypto #Blockchain
-- Sound natural, not robotic
-- Maximum total content around 500 characters
-
-Create the content:
-"""
-            
-            response = self.model.generate_content(prompt)
-            content = response.text.strip()
-            
-            # Clean all unwanted prefixes and special characters
-            content = content.replace('**', '').replace('##', '').replace('***', '')
-            content = content.replace('Tweet 1:', '').replace('Tweet 2:', '').replace('Tweet 3:', '')
-            content = content.replace('TWEET1:', '').replace('TWEET2:', '').replace('TWEET3:', '')
-            content = content.strip()
-            
-            # Remove multiple newlines and clean up
-            import re
-            content = re.sub(r'\n\s*\n', ' ', content)
-            content = re.sub(r'\s+', ' ', content)
-            
-            return content, selected_projects
-            
-        except Exception as e:
-            logging.error(f"Error generating project content: {e}")
-            return None, None
-            
-    def generate_reply_content(self, tweet_content, author):
-        """Tweet'e İngilizce cevap için içerik oluştur"""
-        try:
-            prompt = f"""
-Create a smart, valuable English reply to this tweet:
-
-Tweet: "{tweet_content}"
-Author: @{author}
-
-Rules:
-- Write ONLY in English
-- Maximum 200 characters
-- No special characters (**, ##, etc.)
-- Don't sound like spam
-- Provide valuable insight
-- Be genuine and professional
-- Don't sound like a bot
-- Use 1-2 emojis max
-- Be concise and relevant
-- Add value to the conversation
-
-Only provide the reply text:
-"""
-            
-            response = self.model.generate_content(prompt)
-            reply = response.text.strip()
-            
-            # Clean special characters
-            reply = reply.replace('**', '').replace('##', '').replace('***', '')
-            reply = reply.replace('"', '').replace("'", "'")
-            
-            return reply
-            
-        except Exception as e:
-            logging.error(f"Error generating reply: {e}")
-            return None
-            
-    def split_content_by_sentences(self, content, char_limit=250):
-        """İçeriği cümle bazında böl"""
-        try:
-            # Single paragraph
-            content = content.replace('\n', ' ').strip()
-            
-            # Split by sentences
-            import re
-            sentences = re.split(r'(?<=[.!?])\s+', content)
-            
-            tweets = []
-            current_tweet = ""
-            
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if not sentence:
-                    continue
-                    
-                # Can we add this sentence?
-                test_tweet = current_tweet + (" " if current_tweet else "") + sentence
-                
-                if len(test_tweet) <= char_limit:
-                    current_tweet = test_tweet
-                else:
-                    # Save current tweet
-                    if current_tweet:
-                        tweets.append(current_tweet.strip())
-                    # Start new tweet
-                    current_tweet = sentence
-            
-            # Add last tweet
-            if current_tweet:
-                tweets.append(current_tweet.strip())
-            
-            return tweets
-            
-        except Exception as e:
-            logging.error(f"Error splitting content: {e}")
-            return [content[:char_limit]]
-
 class TwitterBrowser:
     def __init__(self, username, password, email_handler=None, content_generator=None):
         self.username = username
@@ -281,7 +128,7 @@ class TwitterBrowser:
             self.playwright = await async_playwright().start()
             self.context = await self.playwright.chromium.launch_persistent_context(
                 user_data_dir=self.user_data_dir,
-                headless=False,  # Render için True olabilir
+                headless=True,  # Render için True
                 args=[
                     '--no-sandbox',
                     '--disable-dev-shm-usage',
@@ -302,15 +149,31 @@ class TwitterBrowser:
                     '--start-maximized'
                 ]
             )
+            
+            # Anti-detection script ekle
+            await self.context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined,
+                });
+                window.chrome = {
+                    runtime: {},
+                    loadTimes: function() {},
+                    csi: function() {},
+                    app: {}
+                };
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5],
+                });
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en'],
+                });
+            """)
+            
             if self.context.pages:
                 self.page = self.context.pages[0]
             else:
                 self.page = await self.context.new_page()
-            # Stealth fonksiyonunu doğru şekilde çağır
-            if callable(stealth):
-                await stealth(self.page)
-            else:
-                logging.warning("playwright_stealth.stealth fonksiyonu bulunamadı veya çağrılamıyor!")
+                
             await self.page.goto("https://x.com/home", wait_until="networkidle")
             await asyncio.sleep(5)
             logging.info("✅ Chrome initialized with persistent profile!")
@@ -583,15 +446,19 @@ class TwitterBrowser:
         return await self.direct_login()
         
     async def post_thread(self, thread_content):
-        """Thread olarak gönder - + butonu kullanarak"""
+        """Tweet gönder - karakter limiti kontrolü ile"""
         try:
-            logging.info("📝 İçerik hazırlanıyor...")
-            logging.info(f"📝 Ham içerik: {thread_content[:200]}...")
+            # Karakter limiti kontrolü
+            if len(thread_content) > 270:
+                logging.warning(f"⚠️ İçerik çok uzun ({len(thread_content)} karakter), kısaltılıyor...")
+                thread_content = thread_content[:267] + "..."
+            
+            logging.info(f"📝 Tweet gönderiliyor ({len(thread_content)} karakter): {thread_content}")
 
-            # Tweet compose sayfasına git ve sayfanın tam yüklenmesini bekle
+            # Tweet compose sayfasına git
             try:
                 await self.page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded", timeout=45000)
-                await asyncio.sleep(5)  # Sayfanın tam yüklenmesi için bekle
+                await asyncio.sleep(5)
             except Exception as e:
                 logging.warning(f"Compose sayfası yüklenemedi, ana sayfadan deneniyor: {e}")
                 await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=45000)
@@ -614,71 +481,43 @@ class TwitterBrowser:
                     except:
                         continue
 
-            # Tweet compose alanını bulmak için birkaç kez dene
+            # Tweet compose alanını bul
             compose_element = None
-            max_retries = 3
-            for attempt in range(max_retries):
-                compose_selectors = [
-                    'div[data-testid="tweetTextarea_0"]',
-                    'div[contenteditable="true"][data-testid="tweetTextarea_0"]',
-                    'div[role="textbox"][data-testid="tweetTextarea_0"]',
-                    'div[contenteditable="true"]',
-                    'div[role="textbox"]',
-                    'div[aria-label*="Tweet text"]',
-                    'div[aria-label="Text editor"]'
-                ]
-                
-                for selector in compose_selectors:
-                    try:
-                        compose_element = await self.page.wait_for_selector(selector, timeout=10000)
-                        if compose_element:
-                            logging.info(f"✅ Tweet compose alanı bulundu: {selector}")
-                            # İçeriği yazmayı dene
-                            await compose_element.click()
-                            await asyncio.sleep(2)
-                            await compose_element.fill(thread_content)
-                            await asyncio.sleep(2)
-                            
-                            # İçeriğin yazılıp yazılmadığını kontrol et
-                            element_text = await compose_element.text_content()
-                            if element_text:
-                                logging.info("✅ Tweet içeriği başarıyla yazıldı")
-                                break
-                            else:
-                                logging.warning("⚠️ İçerik yazılamadı, alternatif yöntem deneniyor...")
-                                # Alternatif yazma yöntemi
-                                await compose_element.click()
-                                await asyncio.sleep(1)
-                                await self.page.keyboard.press("Control+A")
-                                await asyncio.sleep(1)
-                                await self.page.keyboard.press("Backspace")
-                                await asyncio.sleep(1)
-                                await self.page.keyboard.type(thread_content, delay=100)
-                                await asyncio.sleep(2)
-                    except Exception as e:
-                        logging.warning(f"Selector {selector} ile içerik yazılamadı: {e}")
-                        continue
+            compose_selectors = [
+                'div[data-testid="tweetTextarea_0"]',
+                'div[contenteditable="true"][data-testid="tweetTextarea_0"]',
+                'div[role="textbox"][data-testid="tweetTextarea_0"]',
+                'div[contenteditable="true"]',
+                'div[role="textbox"]'
+            ]
+            
+            for selector in compose_selectors:
+                try:
+                    compose_element = await self.page.wait_for_selector(selector, timeout=10000)
+                    if compose_element:
+                        logging.info(f"✅ Tweet compose alanı bulundu: {selector}")
+                        break
+                except:
+                    continue
 
-                if compose_element and await compose_element.text_content():
-                    break
-                
-                if attempt < max_retries - 1:
-                    logging.warning(f"İçerik yazma denemesi {attempt + 1} başarısız, tekrar deneniyor...")
-                    await asyncio.sleep(3)
-
-            if not compose_element or not await compose_element.text_content():
-                logging.error("❌ Tweet içeriği yazılamadı!")
+            if not compose_element:
+                logging.error("❌ Tweet compose alanı bulunamadı!")
                 return False
 
-            # Tweet gönder butonunu bul ve tıkla
-            post_button = None
+            # İçeriği yaz
+            await compose_element.click()
+            await asyncio.sleep(1)
+            await compose_element.fill(thread_content)
+            await asyncio.sleep(2)
+            
+            logging.info("✅ Tweet içeriği yazıldı")
+
+            # Tweet gönder butonunu bul
             post_selectors = [
-                '[data-testid="tweetButton"]',
-                'div[data-testid="tweetButtonInline"]',
-                'button[data-testid="tweetButton"]',
-                '[role="button"][data-testid="tweetButton"]',
-                'div[data-testid="toolBar"] [role="button"]:has-text("Post")',
-                'div[data-testid="toolBar"] [role="button"]:has-text("Tweet")'
+                '[data-testid="tweetButton"]:not([aria-disabled="true"])',
+                'div[data-testid="tweetButtonInline"]:not([aria-disabled="true"])',
+                'button[data-testid="tweetButton"]:not([aria-disabled="true"])',
+                '[role="button"][data-testid="tweetButton"]:not([aria-disabled="true"])'
             ]
 
             for selector in post_selectors:
@@ -696,11 +535,15 @@ class TwitterBrowser:
                     logging.warning(f"Gönder butonu {selector} tıklanamadı: {e}")
                     continue
 
-            logging.error("❌ Tweet gönderilemedi!")
-            return False
+            # Klavye kısayolu dene
+            logging.info("🔄 Gönder butonu bulunamadı, klavye kısayolu deneniyor...")
+            await self.page.keyboard.press('Ctrl+Enter')
+            await asyncio.sleep(5)
+            logging.info("✅ Tweet klavye kısayolu ile gönderildi!")
+            return True
 
         except Exception as e:
-            logging.error(f"❌ Thread gönderme hatası: {e}")
+            logging.error(f"❌ Tweet gönderme hatası: {e}")
             return False
 
     async def reply_to_tweet(self, tweet_id, reply_content):
@@ -709,145 +552,308 @@ class TwitterBrowser:
             logging.info(f"💬 Tweet'e yanıt hazırlanıyor - Tweet ID: {tweet_id}")
             logging.info(f"💬 Yanıt içeriği: {reply_content}")
             
-            # Yanıtı 2 parçaya böl
-            reply_parts = self.content_generator.split_content_by_sentences(reply_content, char_limit=200)
+            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="networkidle")
+            await asyncio.sleep(5)
             
-            logging.info(f"💬 Toplam {len(reply_parts)} yanıt parçası tespit edildi")
+            # Reply butonuna tıkla
+            reply_selectors = [
+                '[data-testid="reply"]',
+                'div[data-testid="reply"]',
+                'button[data-testid="reply"]'
+            ]
             
-            for i, part in enumerate(reply_parts):
+            reply_clicked = False
+            for selector in reply_selectors:
                 try:
-                    logging.info(f"🚀 Yanıt parçası gönderiliyor ({i+1}/{len(reply_parts)}): {part}")
-                    
-                    await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="networkidle")
-                    await asyncio.sleep(5)
-                    
-                    # Yanıt metnini bul ve doldur
-                    reply_selectors = [
-                        'div[aria-labelledby^="editable-"]',  # Yeni yanıt düzenleyici
-                        'div[role="textbox"]'  # Eski yanıt düzenleyici
-                    ]
-                    
-                    reply_input = None
-                    for selector in reply_selectors:
-                        try:
-                            reply_input = self.page.locator(selector)
-                            if await reply_input.count() > 0:
-                                logging.info(f"✅ Yanıt girişi için element bulundu: {selector}")
-                                break
-                        except:
-                            continue
-                    
-                    if reply_input is None:
-                        logging.error("❌ Yanıt girişi için uygun element bulunamadı")
-                        return False
-                    
-                    await reply_input.fill(part)
-                    await asyncio.sleep(2)
-                    
-                    # Gönder butonuna tıkla
-                    await self.page.locator('div[data-testid="tweetButtonInline"]').click()
-                    logging.info("✅ Yanıt gönderildi")
-                    
-                    await asyncio.sleep(5)
-                    
-                except Exception as e:
-                    logging.error(f"❌ Yanıt gönderme hatası: {e}")
-                    return False
+                    reply_button = await self.page.wait_for_selector(selector, timeout=5000)
+                    if reply_button:
+                        await reply_button.click()
+                        await asyncio.sleep(3)
+                        reply_clicked = True
+                        logging.info("✅ Reply butonu tıklandı")
+                        break
+                except:
+                    continue
             
-            logging.info("✅ Tüm yanıt parçaları başarıyla gönderildi")
+            if not reply_clicked:
+                logging.error("❌ Reply butonu bulunamadı")
+                return False
+            
+            # Reply alanını bul ve doldur
+            reply_area_selectors = [
+                'div[data-testid="tweetTextarea_0"]',
+                'div[contenteditable="true"]',
+                'div[role="textbox"]'
+            ]
+            
+            reply_area = None
+            for selector in reply_area_selectors:
+                try:
+                    reply_area = await self.page.wait_for_selector(selector, timeout=5000)
+                    if reply_area:
+                        logging.info(f"✅ Reply alanı bulundu: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not reply_area:
+                logging.error("❌ Reply alanı bulunamadı")
+                return False
+            
+            # Reply içeriğini yaz
+            await reply_area.click()
+            await asyncio.sleep(1)
+            await reply_area.fill(reply_content)
+            await asyncio.sleep(2)
+            
+            # Reply gönder
+            reply_post_selectors = [
+                '[data-testid="tweetButton"]',
+                'div[data-testid="tweetButtonInline"]',
+                'button[data-testid="tweetButton"]'
+            ]
+            
+            for selector in reply_post_selectors:
+                try:
+                    post_button = await self.page.wait_for_selector(selector, timeout=5000)
+                    if post_button:
+                        await post_button.click()
+                        await asyncio.sleep(3)
+                        logging.info("✅ Reply gönderildi")
+                        return True
+                except:
+                    continue
+            
+            # Klavye kısayolu dene
+            await self.page.keyboard.press('Ctrl+Enter')
+            await asyncio.sleep(3)
+            logging.info("✅ Reply klavye kısayolu ile gönderildi")
             return True
             
         except Exception as e:
-            logging.error(f"❌ Yanıt gönderme hatası: {e}")
+            logging.error(f"❌ Reply gönderme hatası: {e}")
             return False
 
     async def get_latest_tweet_id(self, username):
-        """Bir kullanıcının son tweet ID'sini al"""
+        """Bir kullanıcının son tweet ID'sini al - İYİLEŞTİRİLMİŞ"""
         try:
-            await self.page.goto(f"https://x.com/{username}", wait_until="networkidle", timeout=20000)
-            await asyncio.sleep(3)
-
-            # Tweet elementini bul
-            tweet_selectors = [
-                'article[data-testid="tweet"]',
-                'div[data-testid="tweet"]',
-                '[data-testid="tweetText"]'
-            ]
-            
-            for selector in tweet_selectors:
+            logging.info(f"🔍 Getting latest tweet for @{username}")
+        
+            # Kullanıcı profiline git
+            await self.page.goto(f"https://x.com/{username}", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
+        
+            # Sayfanın tam yüklenmesini bekle
+            try:
+                await self.page.wait_for_selector('[data-testid="primaryColumn"]', timeout=10000)
+            except:
+                logging.warning("Primary column yüklenemedi, devam ediliyor...")
+        
+            # Tweet elementlerini bul - birden fazla yöntem
+            tweet_found = False
+            tweet_id = None
+        
+            # Yöntem 1: Article elementleri
+            try:
+                articles = await self.page.query_selector_all('article[data-testid="tweet"]')
+                if articles and len(articles) > 0:
+                    for article in articles[:3]:  # İlk 3 tweet'i kontrol et
+                        try:
+                            tweet_link = await article.query_selector('a[href*="/status/"]')
+                            if tweet_link:
+                                href = await tweet_link.get_attribute('href')
+                                if href and '/status/' in href:
+                                    tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
+                                    if tweet_id and tweet_id.isdigit():
+                                        logging.info(f"✅ Tweet ID bulundu (Article): {tweet_id}")
+                                        tweet_found = True
+                                        break
+                        except:
+                            continue
+            except Exception as e:
+                logging.warning(f"Article yöntemi başarısız: {e}")
+        
+            # Yöntem 2: Direct link selectors
+            if not tweet_found:
                 try:
-                    tweets = await self.page.query_selector_all(selector)
-                    if tweets and len(tweets) > 0:
-                        # İlk tweet'in ID'sini al
-                        tweet_link = await tweets[0].query_selector('a[href*="/status/"]')
-                        if tweet_link:
-                            href = await tweet_link.get_attribute('href')
-                            tweet_id = href.split('/status/')[1].split('/')[0]
-                            return tweet_id
+                    link_selectors = [
+                        'a[href*="/status/"]',
+                        '[data-testid="tweet"] a[href*="/status/"]',
+                        'article a[href*="/status/"]'
+                    ]
+                
+                    for selector in link_selectors:
+                        try:
+                            links = await self.page.query_selector_all(selector)
+                            if links:
+                                for link in links[:5]:  # İlk 5 linki kontrol et
+                                    href = await link.get_attribute('href')
+                                    if href and '/status/' in href and f'/{username}/' in href:
+                                        tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
+                                        if tweet_id and tweet_id.isdigit():
+                                            logging.info(f"✅ Tweet ID bulundu (Link): {tweet_id}")
+                                            tweet_found = True
+                                            break
+                                if tweet_found:
+                                    break
+                        except:
+                            continue
                 except Exception as e:
-                    logging.warning(f"Tweet selector {selector} failed: {e}")
-                    continue
-            
-            return None
+                    logging.warning(f"Link yöntemi başarısız: {e}")
+        
+            # Yöntem 3: Time elements
+            if not tweet_found:
+                try:
+                    time_elements = await self.page.query_selector_all('time')
+                    for time_elem in time_elements[:3]:
+                        try:
+                            parent_link = await time_elem.query_selector('xpath=ancestor::a[contains(@href, "/status/")]')
+                            if parent_link:
+                                href = await parent_link.get_attribute('href')
+                                if href and '/status/' in href:
+                                    tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
+                                    if tweet_id and tweet_id.isdigit():
+                                        logging.info(f"✅ Tweet ID bulundu (Time): {tweet_id}")
+                                        tweet_found = True
+                                        break
+                        except:
+                            continue
+                except Exception as e:
+                    logging.warning(f"Time yöntemi başarısız: {e}")
+        
+            if tweet_found and tweet_id:
+                logging.info(f"✅ @{username} için tweet ID: {tweet_id}")
+                return tweet_id
+            else:
+                logging.warning(f"⚠️ @{username} için tweet bulunamadı")
+                return None
             
         except Exception as e:
-            logging.error(f"Error getting latest tweet ID: {e}")
+            logging.error(f"❌ @{username} için tweet ID alma hatası: {e}")
             return None
 
     async def get_tweet_content(self, tweet_id):
-        """Tweet içeriğini al"""
+        """Tweet içeriğini al - İYİLEŞTİRİLMİŞ"""
         try:
-            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="networkidle", timeout=20000)
-            await asyncio.sleep(2)
-            
-            # Tweet içeriğini bul
+            logging.info(f"📄 Getting content for tweet: {tweet_id}")
+        
+            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
+        
+            # Tweet içeriğini bul - birden fazla yöntem
+            content = None
+        
+            # Yöntem 1: Standard tweet text selector
             content_selectors = [
                 '[data-testid="tweetText"]',
-                'article[data-testid="tweet"] div[lang]',
-                'div[data-testid="tweetText"]'
+                'div[data-testid="tweetText"]',
+                'article[data-testid="tweet"] [data-testid="tweetText"]'
             ]
-            
+        
             for selector in content_selectors:
                 try:
-                    content_element = await self.page.wait_for_selector(selector, timeout=5000)
+                    content_element = await self.page.wait_for_selector(selector, timeout=8000)
                     if content_element:
                         content = await content_element.inner_text()
-                        return content.strip()
+                        if content and content.strip():
+                            logging.info(f"✅ Tweet içeriği bulundu: {content[:100]}...")
+                            return content.strip()
                 except:
                     continue
-            
+        
+            # Yöntem 2: Lang attribute ile
+            try:
+                lang_elements = await self.page.query_selector_all('div[lang]')
+                for elem in lang_elements:
+                    text = await elem.inner_text()
+                    if text and len(text) > 10:  # Minimum content length
+                        content = text.strip()
+                        logging.info(f"✅ Tweet içeriği bulundu (lang): {content[:100]}...")
+                        return content
+            except:
+                pass
+        
+            # Yöntem 3: Article içindeki text
+            try:
+                article = await self.page.query_selector('article[data-testid="tweet"]')
+                if article:
+                    text_content = await article.inner_text()
+                    # Tweet text'ini ayıkla (username, time vs. hariç)
+                    lines = text_content.split('\n')
+                    for line in lines:
+                        if len(line) > 20 and not line.startswith('@') and not 'ago' in line:
+                            content = line.strip()
+                            logging.info(f"✅ Tweet içeriği bulundu (article): {content[:100]}...")
+                            return content
+            except:
+                pass
+        
+            logging.warning(f"⚠️ Tweet içeriği bulunamadı: {tweet_id}")
             return None
             
         except Exception as e:
-            logging.error(f"Error getting tweet content: {e}")
+            logging.error(f"❌ Tweet içeriği alma hatası: {e}")
             return None
 
     async def get_tweet_time(self, tweet_id):
-        """Tweet'in atılma zamanını al"""
+        """Tweet'in atılma zamanını al - İYİLEŞTİRİLMİŞ"""
         try:
-            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="networkidle", timeout=20000)
-            await asyncio.sleep(2)
-            
+            logging.info(f"🕐 Getting time for tweet: {tweet_id}")
+        
+            # Zaten tweet sayfasındaysak tekrar gitmeye gerek yok
+            current_url = self.page.url
+            if f"/status/{tweet_id}" not in current_url:
+                await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
+        
             # Zaman damgası elementini bul
             time_selectors = [
                 'time[datetime]',
+                'article time[datetime]',
                 '[data-testid="tweet"] time'
             ]
-            
+        
             for selector in time_selectors:
                 try:
-                    time_element = await self.page.wait_for_selector(selector, timeout=5000)
+                    time_element = await self.page.wait_for_selector(selector, timeout=8000)
                     if time_element:
                         datetime_str = await time_element.get_attribute('datetime')
-                        return datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+                        if datetime_str:
+                            tweet_time = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+                            logging.info(f"✅ Tweet zamanı: {tweet_time}")
+                            return tweet_time
                 except:
                     continue
-            
-            return None
+        
+            # Alternatif: Relative time'dan çıkarım yap
+            try:
+                time_elements = await self.page.query_selector_all('time')
+                for time_elem in time_elements:
+                    time_text = await time_elem.inner_text()
+                    if 'h' in time_text or 'm' in time_text or 's' in time_text:
+                        # Yaklaşık zaman hesapla
+                        now = datetime.now()
+                        if 'h' in time_text:
+                            hours = int(time_text.replace('h', '').strip())
+                            tweet_time = now - timedelta(hours=hours)
+                        elif 'm' in time_text:
+                            minutes = int(time_text.replace('m', '').strip())
+                            tweet_time = now - timedelta(minutes=minutes)
+                        else:
+                            tweet_time = now  # Very recent
+                    
+                        logging.info(f"✅ Tweet zamanı (yaklaşık): {tweet_time}")
+                        return tweet_time
+            except:
+                pass
+        
+            logging.warning(f"⚠️ Tweet zamanı bulunamadı: {tweet_id}")
+            # Varsayılan olarak şu anki zamanı döndür (1 saat içinde sayılsın)
+            return datetime.now()
             
         except Exception as e:
-            logging.error(f"Error getting tweet time: {e}")
-            return None
+            logging.error(f"❌ Tweet zamanı alma hatası: {e}")
+            return datetime.now()
 
 async def main():
     logging.info("🚀 Bot başlatılıyor...")
@@ -873,8 +879,8 @@ async def main():
 
     # Sınıfları başlat
     email_handler = EmailHandler()
-    content_generator = AdvancedContentGenerator()  # ContentGenerator yerine AdvancedContentGenerator kullan
-    if not await content_generator.initialize():  # initialize async olduğu için await ekle
+    content_generator = AdvancedContentGenerator()
+    if not await content_generator.initialize():
         print("❌ Gemini başlatılamadı!")
         return
     twitter = TwitterBrowser(TWITTER_USERNAME, TWITTER_PASSWORD, email_handler, content_generator)
@@ -883,7 +889,7 @@ async def main():
         print("❌ Twitter login başarısız!")
         return
 
-    # Proje ve izlenen hesapları load_data() ile yükle
+    # Proje ve izlenen hesapları yükle
     projects = content_generator.projects
     accounts = content_generator.monitored_accounts
 
@@ -892,20 +898,17 @@ async def main():
 
     while True:
         try:
-            # 1. Proje içerik üret ve thread olarak tweetle
+            # 1. Proje içerik üret ve tweet at
             selected_projects = random.sample(content_generator.projects, 2)
-            content = await content_generator.generate_project_content(selected_projects[0])  # İlk proje için içerik üret
-            if content:
-                logging.info(f"📝 Thread olarak paylaşılacak içerik (1): {content}")
-                await twitter.post_thread(content)
-                await asyncio.sleep(random.uniform(30, 60))  # İki tweet arası bekle
-                
-                content = await content_generator.generate_project_content(selected_projects[1])  # İkinci proje için içerik üret
+            
+            for project in selected_projects:
+                content = await content_generator.generate_project_content(project)
                 if content:
-                    logging.info(f"📝 Thread olarak paylaşılacak içerik (2): {content}")
+                    logging.info(f"📝 Tweet paylaşılacak içerik: {content}")
                     await twitter.post_thread(content)
-            else:
-                logging.warning("⚠️ İçerik üretilemedi, thread atlanıyor.")
+                    await asyncio.sleep(random.uniform(30, 60))  # İki tweet arası bekle
+                else:
+                    logging.warning("⚠️ İçerik üretilemedi, tweet atlanıyor.")
 
             # 2. İzlenen hesapların son tweetlerine reply at
             reply_count = 0
@@ -936,7 +939,7 @@ async def main():
                                 if time_diff <= 3600:  # 1 saat = 3600 saniye
                                     logging.info(f"✅ Tweet son 1 saat içinde, reply üretiliyor...")
                                     
-                                    reply = await content_generator.generate_reply_content(tweet_content, account)
+                                    reply = await content_generator.generate_reply({'text': tweet_content, 'username': account})
                                     if reply:
                                         logging.info(f"💬 Reply üretildi: {reply}")
                                         
