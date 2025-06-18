@@ -988,3 +988,20 @@ async def main():
                             logging.warning("⚠️ Tweet içeriği alınamadı")
                     else:
                         logging.warning(f"⚠️ {account} için tweet bulunamadı")
+                        
+                except Exception as e:
+                    logging.error(f"❌ {account} için reply hatası: {e}")
+                    continue
+
+            logging.info(f"✅ Reply döngüsü tamamlandı. Toplam reply: {reply_count}")
+
+            logging.info("⏳ 2 saat bekleniyor...")
+            print("⏳ 2 saat bekleniyor...")
+            await asyncio.sleep(2 * 60 * 60)  # 2 saat bekle
+        except Exception as e:
+            logging.error(f"❌ Ana döngü hatası: {e}")
+            print(f"❌ Ana döngü hatası: {e}")
+            await asyncio.sleep(60)
+
+if __name__ == "__main__":
+    asyncio.run(main())
