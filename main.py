@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import google.generativeai as genai
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth
 import imaplib
 import email
-from advanced_content_generator import AdvancedContentGenerator  # <-- Yeni import
+from advanced_content_generator import AdvancedContentGenerator
+from twitter_browser import TwitterBrowser
 
 # Windows konsol kodlama sorununu çöz
 if sys.platform == "win32":
@@ -37,902 +37,297 @@ logging.basicConfig(
     ]
 )
 
-class EmailHandler:
+class TwitterBot:
     def __init__(self):
-        self.email = os.getenv('EMAIL_ADDRESS')
-        self.password = os.getenv('EMAIL_PASSWORD')
-        logging.info(f"📧 Email Handler initialized for: {self.email}")
+        self.initialization_attempts = 0
+        self.max_init_attempts = 3
+        self.bot_start_time = datetime.now()
+        self.content_generator = AdvancedContentGenerator()
+        self.browser = None
+        self.last_workflow_time = 0
+        self.workflow_interval = 3600  # 1 saat
+        self.tasks_started = False
         
-    async def get_verification_code(self, timeout=120):
-        """Gmail'den X.com doğrulama kodunu al"""
-        try:
-            logging.info("📧 Gmail'e bağlanıyor...")
-            
-            # Gmail IMAP bağlantısı
-            mail = imaplib.IMAP4_SSL('imap.gmail.com')
-            mail.login(self.email, self.password)
-            logging.info("✅ Gmail'e başarıyla bağlandı")
-            
-            mail.select('inbox')
-            
-            start_time = time.time()
-            
-            while time.time() - start_time < timeout:
-                try:
-                    # Son 5 dakikadaki emailleri ara
-                    since_date = (datetime.now() - timedelta(minutes=5)).strftime("%d-%b-%Y")
-                    
-                    # X.com'dan gelen emailleri ara
-                    search_criteria = f'(FROM "info@x.com" SUBJECT "Your X confirmation code") SINCE {since_date}'
-                    
-                    result, messages = mail.search(None, search_criteria)
-                    
-                    if messages[0]:
-                        email_ids = messages[0].split()
-                        logging.info(f"📧 {len(email_ids)} X confirmation email bulundu")
-                        
-                        # En son emaili al
-                        latest_email_id = email_ids[-1]
-                        
-                        # Email içeriğini al
-                        result, msg_data = mail.fetch(latest_email_id, '(RFC822)')
-                        email_body = msg_data[0][1]
-                        
-                        # Email'i parse et
-                        email_message = email.message_from_bytes(email_body)
-                        
-                        # Subject kontrol et
-                        subject = email_message.get('Subject', '')
-                        sender = email_message.get('From', '')
-                        
-                        logging.info(f"📧 Email bulundu - Subject: {subject}")
-                        logging.info(f"📧 Sender: {sender}")
-                        
-                        # Subject'den doğrudan kodu çıkar
-                        if "Your X confirmation code is " in subject:
-                            code_from_subject = subject.replace("Your X confirmation code is ", "").strip()
-                            if len(code_from_subject) >= 6 and len(code_from_subject) <= 8:
-                                logging.info(f"✅ Subject'den kod alındı: {code_from_subject}")
-                                mail.logout()
-                                return code_from_subject
-                        
-                    else:
-                        logging.info("📧 X confirmation emaili bulunamadı, bekleniyor...")
-                    
-                    await asyncio.sleep(8)
-                    
-                except Exception as e:
-                    logging.error(f"❌ Email kontrol hatası: {e}")
-                    await asyncio.sleep(8)
-            
-            mail.logout()
-            logging.warning("⚠️ Timeout: X doğrulama kodu bulunamadı")
-            return None
-            
-        except Exception as e:
-            logging.error(f"❌ Gmail bağlantı hatası: {e}")
-            return None
-
-class ContentGenerator:
-    def __init__(self):
-        self.model = None
+        # Veri listelerini yükle
+        self.load_data()
         
-    def initialize(self):
-        try:
-            gemini_api_key = os.getenv('GEMINI_API_KEY')
-            if not gemini_api_key:
-                logging.error("Error initializing Gemini Flash 2.0: Gemini API key not found")
-                return False
-                
-            genai.configure(api_key=gemini_api_key)
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
-            
-            logging.info("Advanced Gemini Flash 2.0 successfully initialized")
-            return True
-            
-        except Exception as e:
-            logging.error(f"Error initializing Gemini: {e}")
-            return False
-            
-    def generate_project_content(self, projects):
-        """2 rastgele proje için temiz İngilizce içerik oluştur"""
-        try:
-            if not projects or len(projects) < 2:
-                logging.error("Projeler listesi 2'den az! İçerik üretilemiyor.")
-                return None, None
-            selected_projects = random.sample(projects, 2)
-            
-            prompt = f"""
-Create engaging English Twitter content about these 2 crypto projects:
-
-1. {selected_projects[0]['name']} ({selected_projects[0]['twitter']})
-   - Category: {selected_projects[0]['category']}
-   - Website: {selected_projects[0]['website']}
-
-2. {selected_projects[1]['name']} ({selected_projects[1]['twitter']})
-   - Category: {selected_projects[1]['category']}
-   - Website: {selected_projects[1]['website']}
-
-IMPORTANT RULES:
-- Write ONLY in English
-- NO prefixes like "Tweet 1:", "Tweet 2:" etc.
-- Use plain text only, no special characters
-- Start content directly about the projects
-- Tag both projects properly with their handles
-- Each sentence must be complete
-- Be informative and engaging
-- Use hashtags: #DeFi #Web3 #Crypto #Blockchain
-- Sound natural, not robotic
-- Maximum total content around 500 characters
-
-Create the content:
-"""
-            
-            response = self.model.generate_content(prompt)
-            content = response.text.strip()
-            
-            # Clean all unwanted prefixes and special characters
-            content = content.replace('**', '').replace('##', '').replace('***', '')
-            content = content.replace('Tweet 1:', '').replace('Tweet 2:', '').replace('Tweet 3:', '')
-            content = content.replace('TWEET1:', '').replace('TWEET2:', '').replace('TWEET3:', '')
-            content = content.strip()
-            
-            # Remove multiple newlines and clean up
-            import re
-            content = re.sub(r'\n\s*\n', ' ', content)
-            content = re.sub(r'\s+', ' ', content)
-            
-            return content, selected_projects
-            
-        except Exception as e:
-            logging.error(f"Error generating project content: {e}")
-            return None, None
-            
-    def generate_reply_content(self, tweet_content, author):
-        """Tweet'e İngilizce cevap için içerik oluştur"""
-        try:
-            prompt = f"""
-Create a smart, valuable English reply to this tweet:
-
-Tweet: "{tweet_content}"
-Author: @{author}
-
-Rules:
-- Write ONLY in English
-- Maximum 200 characters
-- No special characters (**, ##, etc.)
-- Don't sound like spam
-- Provide valuable insight
-- Be genuine and professional
-- Don't sound like a bot
-- Use 1-2 emojis max
-- Be concise and relevant
-- Add value to the conversation
-
-Only provide the reply text:
-"""
-            
-            response = self.model.generate_content(prompt)
-            reply = response.text.strip()
-            
-            # Clean special characters
-            reply = reply.replace('**', '').replace('##', '').replace('***', '')
-            reply = reply.replace('"', '').replace("'", "'")
-            
-            return reply
-            
-        except Exception as e:
-            logging.error(f"Error generating reply: {e}")
-            return None
-            
-    def split_content_by_sentences(self, content, char_limit=250):
-        """İçeriği cümle bazında böl"""
-        try:
-            # Single paragraph
-            content = content.replace('\n', ' ').strip()
-            
-            # Split by sentences
-            import re
-            sentences = re.split(r'(?<=[.!?])\s+', content)
-            
-            tweets = []
-            current_tweet = ""
-            
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if not sentence:
-                    continue
-                    
-                # Can we add this sentence?
-                test_tweet = current_tweet + (" " if current_tweet else "") + sentence
-                
-                if len(test_tweet) <= char_limit:
-                    current_tweet = test_tweet
-                else:
-                    # Save current tweet
-                    if current_tweet:
-                        tweets.append(current_tweet.strip())
-                    # Start new tweet
-                    current_tweet = sentence
-            
-            # Add last tweet
-            if current_tweet:
-                tweets.append(current_tweet.strip())
-            
-            return tweets
-            
-        except Exception as e:
-            logging.error(f"Error splitting content: {e}")
-            return [content[:char_limit]]
-
-class TwitterBrowser:
-    def __init__(self, username, password, email_handler=None, content_generator=None):
-        self.username = username
-        self.password = password
-        self.email_handler = email_handler
-        self.content_generator = content_generator
-        self.playwright = None
-        self.context = None
-        self.page = None
-        self.user_data_dir = "pw_profile"
-
+    def load_data(self):
+        """Proje ve hesap listelerini yükle"""
+        self.projects = [
+            {"name": "Allora", "twitter": "@AlloraNetwork", "website": "allora.network", "category": "AI + Blockchain"},
+            {"name": "Caldera", "twitter": "@Calderaxyz", "website": "caldera.xyz", "category": "Rollup Infrastructure"},
+            {"name": "Camp Network", "twitter": "@campnetworkxyz", "website": "campnetwork.xyz", "category": "Social Layer"},
+            {"name": "Eclipse", "twitter": "@EclipseFND", "website": "eclipse.builders", "category": "SVM L2"},
+            {"name": "Fogo", "twitter": "@FogoChain", "website": "fogo.io", "category": "Gaming Chain"},
+            {"name": "Humanity Protocol", "twitter": "@Humanityprot", "website": "humanity.org", "category": "Identity"},
+            {"name": "Hyperbolic", "twitter": "@hyperbolic_labs", "website": "hyperbolic.xyz", "category": "AI Infrastructure"},
+            {"name": "Infinex", "twitter": "@infinex", "website": "infinex.xyz", "category": "DeFi Frontend"},
+            {"name": "Irys", "twitter": "@irys_xyz", "website": "irys.xyz", "category": "Data Storage"},
+            {"name": "Katana", "twitter": "@KatanaRIPNet", "website": "katana.network", "category": "Gaming Infrastructure"},
+            {"name": "Lombard", "twitter": "@Lombard_Finance", "website": "lombard.finance", "category": "Bitcoin DeFi"},
+            {"name": "MegaETH", "twitter": "@megaeth_labs", "website": "megaeth.com", "category": "High-Performance L2"},
+            {"name": "Mira Network", "twitter": "@mira_network", "website": "mira.network", "category": "Cross-Chain"},
+            {"name": "Mitosis", "twitter": "@MitosisOrg", "website": "mitosis.org", "category": "Ecosystem Expansion"},
+            {"name": "Monad", "twitter": "@monad_xyz", "website": "monad.xyz", "category": "Parallel EVM"},
+            {"name": "Multibank", "twitter": "@multibank_io", "website": "multibank.io", "category": "Multi-Chain Banking"},
+            {"name": "Multipli", "twitter": "@multiplifi", "website": "multipli.fi", "category": "Yield Optimization"},
+            {"name": "Newton", "twitter": "@MagicNewton", "website": "newton.xyz", "category": "Cross-Chain Liquidity"},
+            {"name": "Novastro", "twitter": "@Novastro_xyz", "website": "novastro.xyz", "category": "Cosmos DeFi"},
+            {"name": "Noya.ai", "twitter": "@NetworkNoya", "website": "noya.ai", "category": "AI-Powered DeFi"},
+            {"name": "OpenLedger", "twitter": "@OpenledgerHQ", "website": "openledger.xyz", "category": "Institutional DeFi"},
+            {"name": "PARADEX", "twitter": "@tradeparadex", "website": "paradex.trade", "category": "Perpetuals DEX"},
+            {"name": "Portal to BTC", "twitter": "@PortaltoBitcoin", "website": "portaltobitcoin.com", "category": "Bitcoin Bridge"},
+            {"name": "Puffpaw", "twitter": "@puffpaw_xyz", "website": "puffpaw.xyz", "category": "Gaming + NFT"},
+            {"name": "SatLayer", "twitter": "@satlayer", "website": "satlayer.xyz", "category": "Bitcoin L2"},
+            {"name": "Sidekick", "twitter": "@Sidekick_Labs", "website": "N/A", "category": "Developer Tools"},
+            {"name": "Somnia", "twitter": "@Somnia_Network", "website": "somnia.network", "category": "Virtual Society"},
+            {"name": "Soul Protocol", "twitter": "@DigitalSoulPro", "website": "digitalsoulprotocol.com", "category": "Digital Identity"},
+            {"name": "Succinct", "twitter": "@succinctlabs", "website": "succinct.xyz", "category": "Zero-Knowledge"},
+            {"name": "Symphony", "twitter": "@SymphonyFinance", "website": "app.symphony.finance", "category": "Yield Farming"},
+            {"name": "Theoriq", "twitter": "@theoriq_ai", "website": "theoriq.ai", "category": "AI Agents"},
+            {"name": "Thrive Protocol", "twitter": "@thriveprotocol", "website": "thriveprotocol.com", "category": "Social DeFi"},
+            {"name": "Union", "twitter": "@union_build", "website": "union.build", "category": "Cross-Chain Infrastructure"},
+            {"name": "YEET", "twitter": "@yeet", "website": "yeet.com", "category": "Meme + Utility"}
+        ]
+        
+        self.monitored_accounts = [
+            "0x_ultra", "0xBreadguy", "beast_ico", "mdudas", "lex_node", 
+            "jessepollak", "0xWenMoon", "ThinkingUSD", "udiWertheimer", 
+            "vohvohh", "NTmoney", "0xMert_", "QwQiao", "DefiIgnas", 
+            "notthreadguy", "Chilearmy123", "Punk9277", "DeeZe", "stevenyuntcap",
+            "chefcryptoz", "ViktorBunin", "ayyyeandy", "andy8052", "Phineas_Sol",
+            "MoonOverlord", "NarwhalTan", "theunipcs", "RyanWatkins_", 
+            "aixbt_agent", "ai_9684xtpa", "icebergy_", "Luyaoyuan1", 
+            "stacy_muur", "TheOneandOmsy", "jeffthedunker", "JoshuaDeuk", 
+            "0x_scientist", "inversebrah", "dachshundwizard", "gammichan",
+            "sandeepnailwal", "segall_max", "blknoiz06", "0xmons", "hosseeb",
+            "GwartyGwart", "JasonYanowitz", "Tyler_Did_It", "laurashin",
+            "Dogetoshi", "benbybit", "MacroCRG", "Melt_Dem"
+        ]
+        
+        logging.info(f"Data loaded: {len(self.projects)} projects, {len(self.monitored_accounts)} accounts")
+        return True
+        
     async def initialize(self):
-        try:
-            self.playwright = await async_playwright().start()
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir=self.user_data_dir,
-                headless=False,  # Render için True olabilir
-                args=[
-                    '--no-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
-                    '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding',
-                    '--disable-extensions',
-                    '--disable-plugins',
-                    '--disable-default-apps',
-                    '--no-first-run',
-                    '--no-default-browser-check',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-automation',
-                    '--disable-infobars',
-                    '--start-maximized'
-                ]
-            )
-            if self.context.pages:
-                self.page = self.context.pages[0]
-            else:
-                self.page = await self.context.new_page()
-            # Stealth fonksiyonunu doğru şekilde çağır
-            if callable(stealth):
-                await stealth(self.page)
-            else:
-                logging.warning("playwright_stealth.stealth fonksiyonu bulunamadı veya çağrılamıyor!")
-            await self.page.goto("https://x.com/home", wait_until="networkidle")
-            await asyncio.sleep(5)
-            logging.info("✅ Chrome initialized with persistent profile!")
-            return True
-        except Exception as e:
-            logging.error(f"❌ Failed to initialize Chrome: {e}")
-            return False
-
-    async def check_login_success(self, page):
-        try:
-            await asyncio.sleep(3)
-            current_url = page.url.lower()
-            
-            if 'login' not in current_url and 'signin' not in current_url and 'flow' not in current_url:
-                success_elements = [
-                    '[data-testid="SideNav_NewTweet_Button"]',
-                    '[href="/compose/post"]',
-                    '[data-testid="primaryColumn"]',
-                    '[aria-label="Home timeline"]'
-                ]
-                
-                for selector in success_elements:
-                    try:
-                        if await page.locator(selector).count() > 0:
-                            logging.info('✅ Login successful!')
-                            return True
-                    except:
-                        continue
-            
-            failure_indicators = ['login', 'signin', 'error', 'suspended', 'flow']
-            for indicator in failure_indicators:
-                if indicator in current_url:
-                    logging.info(f'❌ Login failed - on {indicator} page')
-                    return False
-                    
-            logging.info('❌ Login status unclear')
+        self.initialization_attempts += 1
+        logging.info(f"🤖 Initializing Twitter Bot (Attempt {self.initialization_attempts}/{self.max_init_attempts})...")
+        logging.info(f"🕐 Bot start time: {self.bot_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Initialize content generator
+        if not await self.content_generator.initialize():
             return False
             
-        except Exception as e:
-            logging.error(f'❌ Login check error: {e}')
+        logging.info("🧠 Content generator initialized")
+        
+        # Initialize browser
+        self.browser = TwitterBrowser()
+        
+        if not await self.browser.initialize():
             return False
             
-    async def quick_login_check(self):
+        # Login
+        if not await self.browser.login():
+            logging.error("❌ Login failed")
+            return False
+            
+        logging.info("🎉 Bot successfully initialized!")
+        return True
+        
+    async def post_web3_projects(self):
+        """2 rastgele Web3 projesi hakkında tweet gönder"""
         try:
-            logging.info('⚡ Quick login check...')
-            for _ in range(2):  # 2 kez dene
+            logging.info("🚀 Selecting and posting Web3 project content...")
+        
+            # 2 rastgele proje seç
+            selected_projects = random.sample(self.projects, 2)
+            project_names = [p['name'] for p in selected_projects]
+            logging.info(f"📋 Selected projects: {project_names}")
+        
+            success_count = 0
+        
+            for i, project in enumerate(selected_projects):
                 try:
-                    await self.page.goto('https://x.com/home', wait_until='networkidle', timeout=20000)
-                    await asyncio.sleep(4)
-                    break
-                except Exception as e:
-                    logging.warning(f"Home sayfası yüklenemedi, tekrar deneniyor: {e}")
-                    await asyncio.sleep(3)
-            current_url = self.page.url.lower()
-            if 'login' in current_url or 'signin' in current_url or 'flow' in current_url:
-                logging.info('❌ Not logged in - redirected to login page')
-                return False
-            # Ana sayfa, compose veya dashboard'daysa giriş yapılmış demektir
-            if 'home' in current_url or 'compose' in current_url or 'dashboard' in current_url:
-                try:
-                    tweet_button_selectors = [
-                        '[data-testid="SideNav_NewTweet_Button"]',
-                        '[href="/compose/post"]',
-                        'a[aria-label*="Post"]',
-                        'button[aria-label*="Post"]',
-                        'a[aria-label*="Tweet"]',
-                        'button[aria-label*="Tweet"]',
-                        '[data-testid="tweetButtonInline"]'
-                    ]
-                    for selector in tweet_button_selectors:
-                        if await self.page.locator(selector).count() > 0:
-                            logging.info('✅ Already logged in - tweet button found')
-                            return True
-                    logging.info('❌ Not logged in - no tweet button found')
-                    return False
-                except Exception as e:
-                    logging.info(f'❌ Not logged in - unable to verify login elements: {e}')
-                    return False
-            logging.info('❌ Not logged in - unknown page')
-            return False
-        except Exception as e:
-            logging.error(f'❌ Quick login check failed: {e}')
-            return False
-            
-    async def manual_verification_input(self, page):
-        """Manuel doğrulama kodu girişi"""
-        try:
-            print("\n" + "="*60)
-            print("🔐 EMAIL DOĞRULAMA KODU GEREKİYOR")
-            print("="*60)
-            print(f"📧 Gmail hesabınızı kontrol edin: {self.email_handler.email}")
-            print("🔍 'X (Twitter)' veya 'verify@twitter.com' dan gelen emaili bulun")
-            print("📝 6-8 haneli doğrulama kodunu kopyalayın")
-            print("="*60)
-            
-            verification_code = input("📧 Doğrulama kodunu girin: ").strip()
-            
-            if verification_code:
-                logging.info(f"✅ Kod giriliyor: {verification_code}")
+                    logging.info(f"📝 Processing project {i+1}/2: {project['name']}")
                 
-                selectors = [
-                    'input[data-testid="ocfEnterTextTextInput"]',
-                    'input[name="text"]',
-                    'input[type="text"]',
-                    'input[placeholder*="code"]'
-                ]
+                    # İçerik oluştur
+                    content = await self.content_generator.generate_project_content(project)
                 
-                for selector in selectors:
-                    try:
-                        code_input = page.locator(selector)
-                        if await code_input.count() > 0:
-                            await code_input.fill(verification_code)
-                            await asyncio.sleep(1)
-                            await page.keyboard.press('Enter')
-                            await asyncio.sleep(3)
-                            
-                            if await self.check_login_success(page):
-                                logging.info("✅ Manuel doğrulama başarılı!")
-                                return True
-                            break
-                    except:
-                        continue
-                        
-                logging.error("❌ Doğrulama kodu girişi başarısız")
-                return False
-            else:
-                logging.error("❌ Doğrulama kodu girilmedi")
-                return False
-                
-        except Exception as e:
-            logging.error(f"❌ Manuel doğrulama hatası: {e}")
-            return False
-            
-    async def direct_login(self):
-        try:
-            page = self.page
-            logging.info('⚡ Starting login to X.com...')
-            
-            await page.goto('https://x.com/i/flow/login', wait_until='networkidle')
-            await asyncio.sleep(5)
-            
-            await asyncio.sleep(random.uniform(2, 4))
-            
-            # Username gir
-            username_selectors = [
-                'input[autocomplete="username"]',
-                'input[name="text"]',
-                'input[data-testid="ocfEnterTextTextInput"]'
-            ]
-            
-            username_entered = False
-            for selector in username_selectors:
-                try:
-                    username_input = page.locator(selector)
-                    if await username_input.count() > 0:
-                        await username_input.click()
-                        await asyncio.sleep(1)
-                        await username_input.fill(self.username)
-                        logging.info(f'⚡ Username entered: {self.username}')
-                        await asyncio.sleep(1)
-                        await page.keyboard.press('Enter')
-                        username_entered = True
-                        break
-                except:
-                    continue
-                    
-            if not username_entered:
-                logging.error("❌ Could not enter username")
-                return False
-                
-            await asyncio.sleep(5)
-            
-            # Password gir
-            password_selectors = [
-                'input[name="password"]',
-                'input[type="password"]',
-                'input[autocomplete="current-password"]'
-            ]
-            
-            password_entered = False
-            for selector in password_selectors:
-                try:
-                    password_input = page.locator(selector)
-                    if await password_input.count() > 0:
-                        await password_input.click()
-                        await asyncio.sleep(1)
-                        await password_input.fill(self.password)
-                        logging.info('⚡ Password entered')
-                        await asyncio.sleep(1)
-                        await page.keyboard.press('Enter')
-                        password_entered = True
-                        break
-                except:
-                    continue
-                    
-            if not password_entered:
-                logging.error("❌ Could not enter password")
-                return False
-                
-            await asyncio.sleep(5)
-            
-            # Email doğrulama kontrolü
-            email_verification_required = False
-            try:
-                verification_selectors = [
-                    'input[data-testid="ocfEnterTextTextInput"]',
-                    'input[name="text"]',
-                    'input[placeholder*="confirmation"]',
-                    'input[placeholder*="verification"]'
-                ]
-                
-                for selector in verification_selectors:
-                    if await page.locator(selector).count() > 0:
-                        email_verification_required = True
-                        break
-                        
-            except:
-                pass
-            
-            if email_verification_required:
-                logging.info('📧 Email doğrulama gerekiyor - otomatik kod alınıyor...')
-                
-                logging.info(f"📧 Email Handler durumu:")
-                logging.info(f"   - Email: {self.email_handler.email}")
-                logging.info(f"   - Password: {'✅ Set' if self.email_handler.password else '❌ Not set'}")
-                logging.info(f"   - Password length: {len(self.email_handler.password) if self.email_handler.password else 0}")
-                
-                if self.email_handler and self.email_handler.email and self.email_handler.password:
-                    logging.info("🔄 Gmail'den kod alınıyor...")
-                    
-                    code = await self.email_handler.get_verification_code(timeout=90)
-                    
-                    if code:
-                        logging.info(f'✅ Gmail\'den kod alındı: {code}')
-                        
-                        try:
-                            code_input = page.locator('input[data-testid="ocfEnterTextTextInput"]')
-                            await code_input.fill(str(code))
-                            await asyncio.sleep(1)
-                            await page.keyboard.press('Enter')
-                            await asyncio.sleep(3)
-                            
-                            if await self.check_login_success(page):
-                                logging.info('✅ Otomatik email doğrulama ile giriş başarılı!')
-                                return True
-                            else:
-                                logging.warning("⚠️ Kod girildi ama giriş başarısız, manuel deneniyor...")
-                                return await self.manual_verification_input(page)
-                                
-                        except Exception as e:
-                            logging.error(f"❌ Kod girme hatası: {e}")
-                            return await self.manual_verification_input(page)
-                            
+                    if content:
+                        # Tweet gönder
+                        if await self.browser.post_tweet(content):
+                            logging.info(f"✅ Successfully posted content for {project['name']}")
+                            success_count += 1
+                        else:
+                            logging.error(f"❌ Failed to post content for {project['name']}")
                     else:
-                        logging.warning("❌ Gmail'den kod alınamadı, manuel girişe geçiliyor...")
-                        return await self.manual_verification_input(page)
-                else:
-                    logging.error("❌ Gmail bilgileri eksik!")
-                    return await self.manual_verification_input(page)
-            
-            return await self.check_login_success(page)
-            
-        except Exception as e:
-            logging.error(f"❌ Login error: {e}")
-            return False
-            
-    async def login(self):
-        if await self.quick_login_check():
-            return True
-        return await self.direct_login()
-        
-    async def post_thread(self, thread_content):
-        """Thread olarak gönder - + butonu kullanarak"""
-        try:
-            logging.info("📝 İçerik hazırlanıyor...")
-            logging.info(f"📝 Ham içerik: {thread_content[:200]}...")
-
-        # Tweet compose sayfasına git
-            try:
-                await self.page.goto("https://x.com/compose/tweet", wait_until="networkidle", timeout=45000)
-            except:
-            # Alternatif olarak ana sayfadan tweet butonuna tıkla
-                await self.page.goto("https://x.com/home", wait_until="networkidle", timeout=45000)
-                tweet_button_selectors = [
-                    '[data-testid="SideNav_NewTweet_Button"]',
-                    '[href="/compose/post"]',
-                    'a[aria-label*="Post"]',
-                    'button[aria-label*="Post"]',
-                    '[data-testid="tweetButtonInline"]'
-                ]
-                for selector in tweet_button_selectors:
-                    try:
-                        tweet_btn = await self.page.wait_for_selector(selector, timeout=5000)
-                        if tweet_btn:
-                            await tweet_btn.click()
-                            break
-                    except:
-                        continue
-
-            await asyncio.sleep(random.uniform(3, 5))
-
-        # Tweet içeriğini yaz - DAHA GÜÇLÜ YAKLAŞIM
-            compose_selectors = [
-                'div[data-testid="tweetTextarea_0"]',
-                'div[contenteditable="true"][data-testid="tweetTextarea_0"]',
-                'div[role="textbox"][data-testid="tweetTextarea_0"]',
-                'div[contenteditable="true"][role="textbox"]',
-                'div[contenteditable="true"]'
-            ]
-        
-            compose_element = None
-            for selector in compose_selectors:
-                try:
-                    compose_element = await self.page.wait_for_selector(selector, timeout=10000)
-                    if compose_element:
-                        is_visible = await compose_element.is_visible()
-                        is_enabled = await compose_element.is_enabled()
-                    
-                        if is_visible and is_enabled:
-                            logging.info(f"✅ Tweet compose alanı bulundu: {selector}")
-                            break
-                        else:
-                            compose_element = None
-                except:
-                    continue
-
-            if not compose_element:
-                logging.error("❌ Tweet compose alanı bulunamadı!")
-                return False
-
-        # İçeriği yaz - DAHA GÜVENLI
-            await compose_element.click()
-            await asyncio.sleep(1)
-        
-        # Mevcut içeriği temizle
-            await compose_element.evaluate('el => el.innerHTML = ""')
-            await asyncio.sleep(0.5)
-        
-        # İçeriği yavaş yavaş yaz
-            await compose_element.type(thread_content, delay=50)
-            await asyncio.sleep(2)
-        
-        # İçerik kontrol et
-            entered_text = await compose_element.inner_text()
-            if len(entered_text.strip()) < 10:
-                logging.error("❌ Tweet içeriği düzgün girilmedi!")
-                return False
-            
-            logging.info("✅ Tweet içeriği yazıldı")
-
-        # Tweet gönder butonuna tıkla - DAHA KAPSAMLI
-            post_selectors = [
-                'div[data-testid="tweetButton"]:not([aria-disabled="true"])',
-                'button[data-testid="tweetButton"]:not([aria-disabled="true"])',
-                'div[data-testid="tweetButtonInline"]:not([aria-disabled="true"])',
-                'button[data-testid="tweetButtonInline"]:not([aria-disabled="true"])',
-                '[role="button"][data-testid="tweetButton"]:not([aria-disabled="true"])'
-            ]
-
-            post_button = None
-            for selector in post_selectors:
-                try:
-                    post_button = await self.page.wait_for_selector(selector, timeout=10000)
-                    if post_button:
-                        is_visible = await post_button.is_visible()
-                        is_enabled = await post_button.is_enabled()
-                    
-                        if is_visible and is_enabled:
-                            logging.info(f"✅ Tweet gönder butonu bulundu: {selector}")
-                            break
-                        else:
-                            post_button = None
-                except:
-                    continue
-
-            if post_button:
-            # Tweet'i gönder
-                await post_button.click()
-                await asyncio.sleep(5)
-                logging.info("✅ Tweet gönderildi!")
-                return True
-            else:
-            # Klavye kısayolu dene
-                logging.info("🔄 Gönder butonu bulunamadı, klavye kısayolu deneniyor...")
-                await self.page.keyboard.press('Ctrl+Enter')
-                await asyncio.sleep(5)
-                logging.info("✅ Tweet klavye kısayolu ile gönderildi!")
-                return True
-
-        except Exception as e:
-            logging.error(f"❌ Thread gönderme hatası: {e}")
-            return False
-
-    async def reply_to_tweet(self, tweet_id, reply_content):
-        """Bir tweete yanıt gönder"""
-        try:
-            logging.info(f"💬 Tweet'e yanıt hazırlanıyor - Tweet ID: {tweet_id}")
-            logging.info(f"💬 Yanıt içeriği: {reply_content}")
-            
-            # Yanıtı 2 parçaya böl
-            reply_parts = self.content_generator.split_content_by_sentences(reply_content, char_limit=200)
-            
-            logging.info(f"💬 Toplam {len(reply_parts)} yanıt parçası tespit edildi")
-            
-            for i, part in enumerate(reply_parts):
-                try:
-                    logging.info(f"🚀 Yanıt parçası gönderiliyor ({i+1}/{len(reply_parts)}): {part}")
-                    
-                    await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="networkidle")
-                    await asyncio.sleep(5)
-                    
-                    # Yanıt metnini bul ve doldur
-                    reply_selectors = [
-                        'div[aria-labelledby^="editable-"]',  # Yeni yanıt düzenleyici
-                        'div[role="textbox"]'  # Eski yanıt düzenleyici
-                    ]
-                    
-                    reply_input = None
-                    for selector in reply_selectors:
-                        try:
-                            reply_input = self.page.locator(selector)
-                            if await reply_input.count() > 0:
-                                logging.info(f"✅ Yanıt girişi için element bulundu: {selector}")
-                                break
-                        except:
-                            continue
-                    
-                    if reply_input is None:
-                        logging.error("❌ Yanıt girişi için uygun element bulunamadı")
-                        return False
-                    
-                    await reply_input.fill(part)
-                    await asyncio.sleep(2)
-                    
-                    # Gönder butonuna tıkla
-                    await self.page.locator('div[data-testid="tweetButtonInline"]').click()
-                    logging.info("✅ Yanıt gönderildi")
-                    
-                    await asyncio.sleep(5)
+                        logging.error(f"❌ Failed to generate content for {project['name']}")
+                
+                    # Projeler arası bekleme
+                    if i < len(selected_projects) - 1:
+                        wait_time = random.uniform(30, 60)
+                        logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next project...")
+                        await asyncio.sleep(wait_time)
                     
                 except Exception as e:
-                    logging.error(f"❌ Yanıt gönderme hatası: {e}")
+                    logging.error(f"❌ Error processing project {project['name']}: {e}")
+                    continue
+        
+            logging.info(f"📊 Project posting completed: {success_count}/2 successful")
+            return success_count > 0
+        
+        except Exception as e:
+            logging.error(f"❌ Error in post_web3_projects: {e}")
+            return False
+            
+    async def reply_to_monitored_accounts(self):
+        """Takip edilen hesapların tweetlerine cevap ver"""
+        try:
+            logging.info("💬 Starting reply task for monitored accounts...")
+        
+            # 3 rastgele hesap seç
+            selected_accounts = random.sample(self.monitored_accounts, 3)
+            logging.info(f"👥 Selected accounts: {selected_accounts}")
+        
+            success_count = 0
+        
+            for account in selected_accounts:
+                try:
+                    logging.info(f"🔍 Processing @{account}...")
+                
+                    # Son tweetleri al
+                    recent_tweets = await self.browser.get_user_recent_tweets(account, limit=3)
+                
+                    if recent_tweets:
+                        # En son tweet'e cevap ver
+                        latest_tweet = recent_tweets[0]
+                    
+                        # Cevap içeriği oluştur
+                        reply_content = await self.content_generator.generate_reply(latest_tweet)
+                    
+                        if reply_content:
+                            # Cevap gönder
+                            if await self.browser.reply_to_tweet(latest_tweet['url'], reply_content):
+                                logging.info(f"✅ Successfully replied to @{account}")
+                                success_count += 1
+                            else:
+                                logging.error(f"❌ Failed to reply to @{account}")
+                        else:
+                            logging.error(f"❌ Failed to generate reply for @{account}")
+                    else:
+                        logging.warning(f"⚠️ No recent tweets found for @{account}")
+                
+                    # Hesaplar arası bekleme
+                    wait_time = random.uniform(30, 60)
+                    logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next account...")
+                    await asyncio.sleep(wait_time)
+                    
+                except Exception as e:
+                    logging.error(f"❌ Error processing @{account}: {e}")
+                    continue
+        
+            logging.info(f"📊 Reply task completed: {success_count}/3 successful")
+            return success_count > 0
+        
+        except Exception as e:
+            logging.error(f"❌ Error in reply_to_monitored_accounts: {e}")
+            return False
+            
+    async def run_complete_workflow(self):
+        """Tam workflow'u çalıştır"""
+        try:
+            logging.info("🔄 Starting COMPLETE workflow...")
+            logging.info(f"🕐 Workflow start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Login kontrolü
+            if not self.browser.is_logged_in:
+                logging.info("🔐 Login required, attempting to login...")
+                if not await self.browser.login():
+                    logging.error("❌ Login failed, skipping workflow")
                     return False
             
-            logging.info("✅ Tüm yanıt parçaları başarıyla gönderildi")
-            return True
+            workflow_success = True
+            
+            # TASK 1: Web3 proje içeriği paylaş
+            logging.info("📋 TASK 1: Posting Web3 project content...")
+            task1_success = await self.post_web3_projects()
+            if not task1_success:
+                workflow_success = False
+            
+            # Görevler arası bekleme
+            logging.info("⏳ Waiting 2 minutes between tasks...")
+            await asyncio.sleep(120)
+            
+            # TASK 2: Monitored accounts'lara cevap ver
+            logging.info("📋 TASK 2: Replying to monitored accounts...")
+            task2_success = await self.reply_to_monitored_accounts()
+            if not task2_success:
+                workflow_success = False
+            
+            # Workflow tamamlandı
+            self.last_workflow_time = time.time()
+            
+            if workflow_success:
+                logging.info("🎉 COMPLETE workflow finished successfully!")
+            else:
+                logging.warning("⚠️ COMPLETE workflow finished with some errors")
+            
+            return workflow_success
             
         except Exception as e:
-            logging.error(f"❌ Yanıt gönderme hatası: {e}")
+            logging.error(f"❌ Error in complete workflow: {e}")
             return False
-
-    async def get_latest_tweet_id(self, username):
-        """Bir kullanıcının son tweet ID'sini al"""
-        try:
-            await self.page.goto(f"https://x.com/{username}", wait_until="networkidle", timeout=20000)
-            await asyncio.sleep(3)
-
-            # Tweet elementini bul
-            tweet_selectors = [
-                'article[data-testid="tweet"]',
-                'div[data-testid="tweet"]',
-                '[data-testid="tweetText"]'
-            ]
-            
-            for selector in tweet_selectors:
+    
+    async def run(self):
+        while self.initialization_attempts < self.max_init_attempts:
+            if await self.initialize():
+                logging.info("🤖 Twitter Bot is now running!")
+                logging.info("📋 Task 1: Post 2 Web3 projects")
+                logging.info("💬 Task 2: Reply to monitored accounts")
+                logging.info("🛡️ Anti-detection measures active")
+                logging.info(f"🚀 Projects available: {len(self.projects)}")
+                logging.info(f"👥 Monitored accounts: {len(self.monitored_accounts)}")
+                
+                # Ana bot döngüsü
                 try:
-                    tweets = await self.page.query_selector_all(selector)
-                    if tweets and len(tweets) > 0:
-                        # İlk tweet'in ID'sini al
-                        tweet_link = await tweets[0].query_selector('a[href*="/status/"]')
-                        if tweet_link:
-                            href = await tweet_link.get_attribute('href')
-                            tweet_id = href.split('/status/')[1].split('/')[0]
-                            return tweet_id
-                except Exception as e:
-                    logging.warning(f"Tweet selector {selector} failed: {e}")
-                    continue
-            
-            return None
-            
-        except Exception as e:
-            logging.error(f"Error getting latest tweet ID: {e}")
-            return None
-
-    async def get_tweet_content(self, tweet_id):
-        """Tweet içeriğini al"""
-        try:
-            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="networkidle", timeout=20000)
-            await asyncio.sleep(2)
-            
-            # Tweet içeriğini bul
-            content_selectors = [
-                '[data-testid="tweetText"]',
-                'article[data-testid="tweet"] div[lang]',
-                'div[data-testid="tweetText"]'
-            ]
-            
-            for selector in content_selectors:
-                try:
-                    content_element = await self.page.wait_for_selector(selector, timeout=5000)
-                    if content_element:
-                        content = await content_element.inner_text()
-                        return content.strip()
-                except:
-                    continue
-            
-            return None
-            
-        except Exception as e:
-            logging.error(f"Error getting tweet content: {e}")
-            return None
-
-    async def get_tweet_time(self, tweet_id):
-        """Tweet'in atılma zamanını al"""
-        try:
-            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="networkidle", timeout=20000)
-            await asyncio.sleep(2)
-            
-            # Zaman damgası elementini bul
-            time_selectors = [
-                'time[datetime]',
-                '[data-testid="tweet"] time'
-            ]
-            
-            for selector in time_selectors:
-                try:
-                    time_element = await self.page.wait_for_selector(selector, timeout=5000)
-                    if time_element:
-                        datetime_str = await time_element.get_attribute('datetime')
-                        return datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
-                except:
-                    continue
-            
-            return None
-            
-        except Exception as e:
-            logging.error(f"Error getting tweet time: {e}")
-            return None
+                    # İlk workflow'u hemen başlat
+                    logging.info("🚀 Starting initial COMPLETE workflow NOW...")
+                    await self.run_complete_workflow()
+                    
+                    # Ana döngü
+                    while True:
+                        current_time = time.time()
+                        time_since_last = current_time - self.last_workflow_time
+                        
+                        if time_since_last >= self.workflow_interval:
+                            logging.info("🔄 1 hour passed, starting new workflow...")
+                            await self.run_complete_workflow()
+                        else:
+                            remaining_time = self.workflow_interval - time_since_last
+                            remaining_minutes = remaining_time / 60
+                            logging.info(f"⏰ Next workflow in {remaining_minutes:.1f} minutes")
+                        
+                        # 5 dakika bekle
+                        await asyncio.sleep(300)
+                        
+                except KeyboardInterrupt:
+                    logging.info("🛑 Bot stopped by user")
+                    break
+                    
+            else:
+                if self.initialization_attempts >= self.max_init_attempts:
+                    logging.error(f"❌ Failed to initialize after {self.max_init_attempts} attempts")
+                    break
+                else:
+                    logging.warning(f"⚠️ Initialization failed, retrying in 30 seconds...")
+                    await asyncio.sleep(30)
+                    
+        # Cleanup
+        if self.browser:
+            await self.browser.close()
 
 async def main():
-    logging.info("🚀 Bot başlatılıyor...")
-    print("🚀 Bot başlatılıyor...")
-
-    # Gerekli environment değişkenlerini kontrol et
-    TWITTER_USERNAME = os.getenv('TWITTER_USERNAME')
-    TWITTER_PASSWORD = os.getenv('TWITTER_PASSWORD')
-    if not TWITTER_USERNAME or not TWITTER_PASSWORD:
-        logging.error("❌ Twitter kullanıcı adı veya şifre .env dosyasında eksik!")
-        print("❌ Twitter kullanıcı adı veya şifre .env dosyasında eksik!")
-        return
-
-    # Email ve Gemini API anahtarlarını kontrol et
-    if not os.getenv('EMAIL_ADDRESS') or not os.getenv('EMAIL_PASSWORD'):
-        logging.error("❌ Gmail bilgileri .env dosyasında eksik!")
-        print("❌ Gmail bilgileri .env dosyasında eksik!")
-        return
-    if not os.getenv('GEMINI_API_KEY'):
-        logging.error("❌ Gemini API anahtarı .env dosyasında eksik!")
-        print("❌ Gemini API anahtarı .env dosyasında eksik!")
-        return
-
-    # Sınıfları başlat
-    email_handler = EmailHandler()
-    content_generator = AdvancedContentGenerator()  # ContentGenerator yerine AdvancedContentGenerator kullan
-    if not await content_generator.initialize():  # initialize async olduğu için await ekle
-        print("❌ Gemini başlatılamadı!")
-        return
-    twitter = TwitterBrowser(TWITTER_USERNAME, TWITTER_PASSWORD, email_handler, content_generator)
-    await twitter.initialize()
-    if not await twitter.login():
-        print("❌ Twitter login başarısız!")
-        return
-
-    # Proje ve izlenen hesapları yükle - artık load_data() ile yüklendiği için doğrudan kullan
-    projects = content_generator.projects
-    accounts = content_generator.monitored_accounts
-
-    logging.info("✅ Bot başlatıldı ve login oldu. Döngü başlıyor...")
-    print("✅ Bot başlatıldı ve login oldu. Döngü başlıyor...")
-
-    while True:
-        try:
-            # 1. Proje içerik üret ve thread olarak tweetle
-            selected_projects = random.sample(content_generator.projects, 2)
-            content = await content_generator.generate_project_content(selected_projects[0])  # İlk proje için içerik üret
-            if content:
-                logging.info(f"📝 Thread olarak paylaşılacak içerik (1): {content}")
-                await twitter.post_thread(content)
-                await asyncio.sleep(random.uniform(30, 60))  # İki tweet arası bekle
-                
-                content = await content_generator.generate_project_content(selected_projects[1])  # İkinci proje için içerik üret
-                if content:
-                    logging.info(f"📝 Thread olarak paylaşılacak içerik (2): {content}")
-                    await twitter.post_thread(content)
-            else:
-                logging.warning("⚠️ İçerik üretilemedi, thread atlanıyor.")
-
-            # 2. İzlenen hesapların son tweetlerine reply at
-            for account in accounts:
-                try:
-                    tweet_id = await twitter.get_latest_tweet_id(account)  # account artık string
-                    if tweet_id:
-                        tweet_content = await twitter.get_tweet_content(tweet_id)
-                        if tweet_content:
-                            # Son 1 saatin tweet'i mi kontrol et
-                            tweet_time = await twitter.get_tweet_time(tweet_id)
-                            if tweet_time and (datetime.now() - tweet_time).total_seconds() <= 3600:  # 1 saat = 3600 saniye
-                                reply = await content_generator.generate_reply_content(tweet_content, account)
-                                if reply:
-                                    await twitter.reply_to_tweet(tweet_id, reply)
-                                    await asyncio.sleep(random.uniform(30, 60))  # Her reply arasında bekle
-                except Exception as e:
-                    logging.error(f"❌ {account} için reply hatası: {e}")
-                    continue
-
-            logging.info("⏳ 2 saat bekleniyor...")
-            print("⏳ 2 saat bekleniyor...")
-            await asyncio.sleep(2 * 60 * 60)  # 2 saat bekle
-        except Exception as e:
-            logging.error(f"❌ Ana döngü hatası: {e}")
-            print(f"❌ Ana döngü hatası: {e}")
-            await asyncio.sleep(60)
+    bot = TwitterBot()
+    await bot.run()
 
 if __name__ == "__main__":
     asyncio.run(main())
