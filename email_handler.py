@@ -8,8 +8,8 @@ from typing import Optional
 
 class EmailHandler:
     def __init__(self):
-        self.email_user = os.environ.get('EMAIL_ADDRESS', "hasanacikgoz91@gmail.com")
-        self.email_pass = os.environ.get('EMAIL_PASSWORD', "Nuray1965+")
+        self.email_user = "hasanacikgoz91@gmail.com"
+        self.email_pass = "Nuray1965+"  # Direkt şifre
         self.imap_server = "imap.gmail.com"
         self.imap_port = 993
         self.logger = logging.getLogger('EmailHandler')
@@ -26,8 +26,8 @@ class EmailHandler:
     def get_twitter_verification_code(self, timeout=90) -> Optional[str]:
         """Twitter'dan gelen doğrulama kodunu email'den al"""
         try:
-            # Gmail App Password'u kullan, yoksa normal şifreyi kullan
-            self.email_pass = os.environ.get('GMAIL_APP_PASSWORD') or os.environ.get('EMAIL_PASSWORD', "Nuray1965+")
+            # Önce environment variable'dan al, yoksa direkt şifreyi kullan
+            self.email_pass = os.environ.get('GMAIL_APP_PASSWORD') or "Nuray1965+"
             
             if not self.email_pass:
                 self.logger.error("❌ No email password available!")
