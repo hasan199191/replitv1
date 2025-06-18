@@ -265,31 +265,31 @@ class TwitterBrowser:
         
             # Home sayfasına git
             await self.page.goto("https://twitter.com/home", 
-                            wait_until="domcontentloaded", 
-                            timeout=10000)
-            await asyncio.sleep(3)  # Biraz daha bekle
-        
-            # Method 1: Direkt compose area ara
-            self.logger.info("🔍 Method 1: Looking for compose area directly...")
-            compose_element = await self.find_compose_area_direct()
+                        wait_until="domcontentloaded", 
+                        timeout=10000)
+        await asyncio.sleep(3)  # Biraz daha bekle
     
+        # Method 1: Direkt compose area ara
+        self.logger.info("🔍 Method 1: Looking for compose area directly...")
+        compose_element = await self.find_compose_area_direct()
+
         # Method 2: Tweet butonuna tıklayarak compose area aç
         if not compose_element:
             self.logger.info("🔄 Method 1 failed, trying to click tweet button...")
             compose_element = await self.find_compose_area_via_button()
-    
+
         # Method 3: Klavye kısayolu ile compose area aç
         if not compose_element:
             self.logger.info("🔄 Method 2 failed, trying keyboard shortcut...")
             compose_element = await self.find_compose_area_via_shortcut()
-    
+
         # Method 4: Sayfayı yenile ve tekrar dene
         if not compose_element:
             self.logger.info("🔄 Method 3 failed, refreshing page...")
             await self.page.reload(wait_until="domcontentloaded")
             await asyncio.sleep(3)
             compose_element = await self.find_compose_area_direct()
-    
+
         if not compose_element:
             self.logger.error("❌ Could not find tweet compose area with any method")
             return False
@@ -453,7 +453,7 @@ class TwitterBrowser:
                             return True
             except:
                 continue
-    
+
         # Klavye kısayolu dene
         self.logger.info("🔄 Trying keyboard shortcut Ctrl+Enter...")
         await self.page.keyboard.press('Control+Enter')
