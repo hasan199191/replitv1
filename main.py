@@ -215,104 +215,59 @@ class TwitterBrowser:
             await asyncio.sleep(5)  # Daha uzun bekle
             current_url = page.url.lower()
             
-            logging.info(f"🔍 Current URL after login attempt: {current_url}")
-            
-            # URL-based success indicators
-            success_urls = ['home', 'dashboard', 'compose']
-            failure_urls = ['login', 'signin', 'error', 'suspended', 'flow', 'challenge']
+            logging.info(f"🔍 Current URL: {current_url}")
             
             # URL kontrolü
-            url_indicates_success = any(success_url in current_url for success_url in success_urls)
-            url_indicates_failure = any(failure_url in current_url for failure_url in failure_urls)
-            
-            logging.info(f"🔍 URL indicates success: {url_indicates_success}")
-            logging.info(f"🔍 URL indicates failure: {url_indicates_failure}")
-            
-            if url_indicates_failure:
-                logging.info('❌ Login failed - on failure page')
-                return False
-            
-            if url_indicates_success:
-                logging.info('✅ URL indicates success, checking for UI elements...')
-            
+            if 'login' not in current_url and 'signin' not in current_url and 'flow' not in current_url:
                 # UI element kontrolü
                 success_elements = [
                     '[data-testid="SideNav_NewTweet_Button"]',
                     '[href="/compose/post"]',
                     '[data-testid="primaryColumn"]',
                     '[aria-label="Home timeline"]',
-                    '[data-testid="AppTabBar_Home_Link"]',
-                    '[data-testid="SideNav_AccountSwitcher_Button"]'
+                    '[data-testid="AppTabBar_Home_Link"]'
                 ]
-            
+                
                 for selector in success_elements:
                     try:
                         element_count = await page.locator(selector).count()
-                        logging.info(f"🔍 Element {selector}: {element_count} found")
+                        logging.info(f"🔍 Checking {selector}: {element_count} found")
                         if element_count > 0:
-                            logging.info('✅ Login successful - UI element found!')
+                            logging.info('✅ Login successful!')
                             return True
                     except Exception as e:
-                        logging.warning(f"⚠️ Error checking selector {selector}: {e}")
+                        logging.warning(f"⚠️ Error checking {selector}: {e}")
                         continue
-        
-            # Eğer URL belirsizse, sayfa içeriğini kontrol et
-            try:
-                page_content = await page.content()
+                
+                # Sayfa başlığı kontrolü
+                try:
+                    title = await page.title()
+                    logging.info(f"🔍 Page title: {title}")
+                    if 'home' in title.lower() or 'x.com' in title.lower():
+                        logging.info('✅ Login successful (by title)!')
+                        return True
+                except:
+                    pass
             
-                # Başarı göstergeleri
-                success_indicators = [
-                    'data-testid="SideNav_NewTweet_Button"',
-                    'data-testid="primaryColumn"',
-                    'Home timeline',
-                    'What\'s happening'
-                ]
-            
-                # Başarısızlık göstergeleri  
-                failure_indicators = [
-                    'Sign in to X',
-                    'Log in',
-                    'Enter your password',
-                    'Something went wrong',
-                    'Try again'
-                ]
-            
-                success_found = any(indicator in page_content for indicator in success_indicators)
-                failure_found = any(indicator in page_content for indicator in failure_indicators)
-            
-                logging.info(f"🔍 Page content indicates success: {success_found}")
-                logging.info(f"🔍 Page content indicates failure: {failure_found}")
-            
-                if success_found:
-                    logging.info('✅ Login successful - page content indicates success!')
-                    return True
-            
-                if failure_found:
-                    logging.info('❌ Login failed - page content indicates failure')
+            # Başarısızlık göstergeleri
+            failure_indicators = ['login', 'signin', 'error', 'suspended', 'flow']
+            for indicator in failure_indicators:
+                if indicator in current_url:
+                    logging.info(f'❌ Login failed - on {indicator} page')
                     return False
             
-            except Exception as e:
-                logging.error(f"❌ Error checking page content: {e}")
-        
-            # Son çare: Sayfa başlığını kontrol et
+            # Email verification kontrolü
             try:
-                page_title = await page.title()
-                logging.info(f"🔍 Page title: {page_title}")
-            
-                if any(word in page_title.lower() for word in ['home', 'timeline', 'dashboard']):
-                    logging.info('✅ Login successful - page title indicates success!')
-                    return True
-            
-                if any(word in page_title.lower() for word in ['login', 'sign in', 'error']):
-                    logging.info('❌ Login failed - page title indicates failure')
+                verification_elements = await page.locator('input[data-testid="ocfEnterTextTextInput"]').count()
+                if verification_elements > 0:
+                    logging.info('📧 Email verification required')
                     return False
-            
-            except Exception as e:
-                logging.error(f"❌ Error checking page title: {e}")
-        
-            logging.info('❌ Login status unclear - assuming failure')
+            except:
+                pass
+                    
+            logging.info('❌ Login status unclear - assuming failed')
             return False
-        
+            
         except Exception as e:
             logging.error(f'❌ Login check error: {e}')
             return False
@@ -544,48 +499,7 @@ class TwitterBrowser:
                 logging.error("❌ Could not enter password")
                 return False
                 
-            # After password entry, add this debugging section:
-            await asyncio.sleep(8)  # Longer wait after password
-
-            # Check what happened after password entry
-            current_url_after_password = page.url.lower()
-            logging.info(f"🔍 URL after password entry: {current_url_after_password}")
-
-            # Check if we need to handle additional verification
-            verification_needed = False
-            try:
-                # Check for various verification prompts
-                verification_selectors = [
-                    'input[data-testid="ocfEnterTextTextInput"]',
-                    'input[name="text"]',
-                    'input[placeholder*="confirmation"]',
-                    'input[placeholder*="verification"]',
-                    'input[placeholder*="code"]',
-                    '[data-testid="ocfEnterTextTextInput"]'
-                ]
-            
-                for selector in verification_selectors:
-                    element_count = await page.locator(selector).count()
-                    if element_count > 0:
-                        logging.info(f"🔍 Verification element found: {selector}")
-                        verification_needed = True
-                        break
-                
-            except Exception as e:
-                logging.warning(f"⚠️ Error checking for verification: {e}")
-
-            if verification_needed:
-                logging.info('📧 Email doğrulama gerekiyor - otomatik işlem başlatılıyor...')
-                return await self.manual_verification_input(page)
-            else:
-                logging.info('ℹ️ No verification needed, checking login success...')
-            
-            # Take a screenshot for debugging (optional)
-            try:
-                await page.screenshot(path='/tmp/login_debug.png')
-                logging.info('📸 Debug screenshot saved to /tmp/login_debug.png')
-            except:
-                pass
+            await asyncio.sleep(8)  # Login sonrası daha uzun bekle
             
             # Email doğrulama kontrolü
             email_verification_required = False
@@ -621,141 +535,109 @@ class TwitterBrowser:
         return await self.direct_login()
         
     async def post_thread(self, thread_content):
-        """Tweet gönder - STRING KONTROLÜ İLE"""
+        """DÜZELTME: Thread'i tek seferde gönder"""
         try:
             # TİP KONTROLÜ - ÇOK ÖNEMLİ!
-            if not isinstance(thread_content, str):
-                logging.error(f"❌ İçerik string değil! Tip: {type(thread_content)}")
-                logging.error(f"❌ İçerik: {thread_content}")
+            if isinstance(thread_content, list):
+                tweets = thread_content
+            elif isinstance(thread_content, str):
+                # String'i cümlelere böl
+                tweets = self.content_generator.split_content_by_sentences(thread_content, char_limit=270)
+            else:
+                logging.error(f"❌ İçerik tipi desteklenmiyor: {type(thread_content)}")
                 return False
             
-            # Karakter limiti kontrolü
-            if len(thread_content) > 270:
-                logging.warning(f"⚠️ İçerik çok uzun ({len(thread_content)} karakter), kısaltılıyor...")
-                thread_content = thread_content[:267] + "..."
-            
-            logging.info(f"📝 Tweet gönderiliyor ({len(thread_content)} karakter): {thread_content}")
+            logging.info(f"📝 Thread gönderiliyor: {len(tweets)} tweet")
 
-            # Tweet compose sayfasına git
-            try:
-                await self.page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded", timeout=45000)
-                await asyncio.sleep(5)
-            except Exception as e:
-                logging.warning(f"Compose sayfası yüklenemedi, ana sayfadan deneniyor: {e}")
-                await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=45000)
-                await asyncio.sleep(5)
-                
-                tweet_button_selectors = [
-                    '[data-testid="SideNav_NewTweet_Button"]',
-                    '[href="/compose/post"]',
-                    'a[aria-label*="Post"]',
-                    'button[aria-label*="Post"]',
-                    '[data-testid="tweetButtonInline"]'
-                ]
-                for selector in tweet_button_selectors:
+            # 1. Compose sayfasını aç
+            await self.page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
+
+            for i, tweet_text in enumerate(tweets):
+                # Tweet alanını bul
+                compose_element = None
+                for selector in [
+                    "div[data-testid='tweetTextarea_0']",
+                    "div[contenteditable='true'][data-testid='tweetTextarea_0']",
+                    "div[role='textbox'][data-testid='tweetTextarea_0']",
+                    "div[contenteditable='true']",
+                    "div[role='textbox']"
+                ]:
                     try:
-                        tweet_btn = await self.page.wait_for_selector(selector, timeout=5000)
-                        if tweet_btn:
-                            await tweet_btn.click()
-                            await asyncio.sleep(3)
+                        compose_element = await self.page.wait_for_selector(selector, timeout=10000)
+                        if compose_element:
                             break
-                    except:
+                    except Exception as e:
+                        logging.warning(f"⚠️ Tweet alanı seçici hatası: {e}")
                         continue
 
-            # Tweet compose alanını bul
-            compose_element = None
-            compose_selectors = [
-                'div[data-testid="tweetTextarea_0"]',
-                'div[contenteditable="true"][data-testid="tweetTextarea_0"]',
-                'div[role="textbox"][data-testid="tweetTextarea_0"]',
-                'div[contenteditable="true"]',
-                'div[role="textbox"]'
-            ]
-            
-            for selector in compose_selectors:
-                try:
-                    compose_element = await self.page.wait_for_selector(selector, timeout=10000)
-                    if compose_element:
-                        logging.info(f"✅ Tweet compose alanı bulundu: {selector}")
-                        break
-                except:
-                    continue
+                if not compose_element:
+                    logging.error("❌ Tweet yazma alanı bulunamadı!")
+                    return False
 
-            if not compose_element:
-                logging.error("❌ Tweet compose alanı bulunamadı!")
-                return False
-
-            # İçeriği yaz - GÜÇLÜ YAKLAŞIM
-            try:
+                # Alanı temizle ve tweeti yaz
                 await compose_element.click()
                 await asyncio.sleep(1)
-                
-                # Önce alanı temizle
-                await self.page.keyboard.press("Control+A")
-                await asyncio.sleep(0.5)
-                await self.page.keyboard.press("Backspace")
+                await compose_element.fill(tweet_text)
                 await asyncio.sleep(1)
-                
-                # İçeriği yaz
-                await compose_element.fill(thread_content)
-                await asyncio.sleep(2)
-                
-                # Kontrol et
-                element_text = await compose_element.text_content()
-                if not element_text or len(element_text.strip()) == 0:
-                    logging.warning("⚠️ Fill çalışmadı, klavye ile yazılıyor...")
-                    await compose_element.click()
-                    await asyncio.sleep(1)
-                    await self.page.keyboard.type(thread_content, delay=50)
-                    await asyncio.sleep(2)
-                
-                logging.info("✅ Tweet içeriği yazıldı")
-                
-            except Exception as e:
-                logging.error(f"❌ İçerik yazma hatası: {e}")
-                return False
 
-            # Tweet gönder butonunu bul
-            post_selectors = [
-                '[data-testid="tweetButton"]:not([aria-disabled="true"])',
-                'div[data-testid="tweetButtonInline"]:not([aria-disabled="true"])',
-                'button[data-testid="tweetButton"]:not([aria-disabled="true"])',
-                '[role="button"][data-testid="tweetButton"]:not([aria-disabled="true"])'
-            ]
+                # Son tweet değilse + butonuna tıkla
+                if i < len(tweets) - 1:
+                    plus_button = None
+                    for plus_selector in [
+                        "button[data-testid='addButton']",
+                        "div[aria-label='Add post']",
+                        "[role='button'][aria-label='Add post']",
+                        "button[aria-label='Add post']"
+                    ]:
+                        try:
+                            plus_button = await self.page.wait_for_selector(plus_selector, timeout=5000)
+                            if plus_button:
+                                await plus_button.click()
+                                await asyncio.sleep(2)  # Daha uzun bekleme süresi ekle
+                                logging.info(f"✅ Tweet {i+1} eklendi, + butonuna tıklandı")
+                                break
+                        except Exception as e:
+                            logging.warning(f"⚠️ + butonu seçici hatası: {e}")
+                            continue
+                    if not plus_button:
+                        logging.error("❌ + butonu bulunamadı!")
+                        return False
 
-            for selector in post_selectors:
+            # Son tweetten sonra gönder butonuna tıkla
+            post_button = None
+            for post_selector in [
+                "div[data-testid='tweetButton']",
+                "div[data-testid='tweetButtonInline']",
+                "button[data-testid='tweetButton']",
+                "[role='button'][data-testid='tweetButton']"
+            ]:
                 try:
-                    post_button = await self.page.wait_for_selector(selector, timeout=10000)
+                    post_button = await self.page.wait_for_selector(post_selector, timeout=10000)
                     if post_button:
-                        is_disabled = await post_button.get_attribute('aria-disabled')
-                        if is_disabled != 'true':
-                            logging.info(f"✅ Tweet gönder butonu bulundu: {selector}")
-                            await post_button.click()
-                            await asyncio.sleep(5)
-                            logging.info("✅ Tweet gönderildi!")
-                            return True
+                        await post_button.click()
+                        await asyncio.sleep(5)
+                        logging.info("✅ Thread zincir olarak gönderildi!")
+                        return True
                 except Exception as e:
-                    logging.warning(f"Gönder butonu {selector} tıklanamadı: {e}")
+                    logging.warning(f"⚠️ Gönder butonu seçici hatası: {e}")
                     continue
 
-            # Klavye kısayolu dene
-            logging.info("🔄 Gönder butonu bulunamadı, klavye kısayolu deneniyor...")
-            await self.page.keyboard.press('Ctrl+Enter')
-            await asyncio.sleep(5)
-            logging.info("✅ Tweet klavye kısayolu ile gönderildi!")
-            return True
+            logging.error("❌ Thread gönderilemedi!")
+            return False
 
         except Exception as e:
-            logging.error(f"❌ Tweet gönderme hatası: {e}")
+            logging.error(f"❌ Thread gönderme hatası: {e}")
             return False
 
     async def reply_to_tweet(self, tweet_id, reply_content):
-        """Bir tweete yanıt gönder"""
+        """DÜZELTME: Tweet'e yanıt ver"""
         try:
             logging.info(f"💬 Tweet'e yanıt hazırlanıyor - Tweet ID: {tweet_id}")
             logging.info(f"💬 Yanıt içeriği: {reply_content}")
             
-            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="networkidle")
+            # Tweet sayfasına git
+            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(5)
             
             # Reply butonuna tıkla
@@ -838,19 +720,20 @@ class TwitterBrowser:
             return False
 
     async def get_latest_tweet_id(self, username):
-        """Bir kullanıcının son tweet ID'sini al - İYİLEŞTİRİLMİŞ"""
+        """DÜZELTME: Kullanıcının son tweet ID'sini al"""
         try:
             logging.info(f"🔍 Getting latest tweet for @{username}")
         
-            # Kullanıcı profiline git
-            await self.page.goto(f"https://x.com/{username}", wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(5)
+            # Kullanıcı profiline git - timeout'u artır
+            await self.page.goto(f"https://x.com/{username}", wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(8)  # Daha uzun bekle
         
             # Sayfanın tam yüklenmesini bekle
             try:
-                await self.page.wait_for_selector('[data-testid="primaryColumn"]', timeout=10000)
+                await self.page.wait_for_selector('[data-testid="primaryColumn"]', timeout=15000)
+                logging.info("✅ Primary column yüklendi")
             except:
-                logging.warning("Primary column yüklenemedi, devam ediliyor...")
+                logging.warning("⚠️ Primary column yüklenemedi, devam ediliyor...")
         
             # Tweet elementlerini bul - birden fazla yöntem
             tweet_found = False
@@ -859,8 +742,10 @@ class TwitterBrowser:
             # Yöntem 1: Article elementleri
             try:
                 articles = await self.page.query_selector_all('article[data-testid="tweet"]')
+                logging.info(f"🔍 {len(articles)} article bulundu")
+                
                 if articles and len(articles) > 0:
-                    for article in articles[:3]:  # İlk 3 tweet'i kontrol et
+                    for i, article in enumerate(articles[:3]):  # İlk 3 tweet'i kontrol et
                         try:
                             tweet_link = await article.query_selector('a[href*="/status/"]')
                             if tweet_link:
@@ -868,10 +753,11 @@ class TwitterBrowser:
                                 if href and '/status/' in href:
                                     tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
                                     if tweet_id and tweet_id.isdigit():
-                                        logging.info(f"✅ Tweet ID bulundu (Article): {tweet_id}")
+                                        logging.info(f"✅ Tweet ID bulundu (Article {i}): {tweet_id}")
                                         tweet_found = True
                                         break
-                        except:
+                        except Exception as e:
+                            logging.warning(f"⚠️ Article {i} işlenirken hata: {e}")
                             continue
             except Exception as e:
                 logging.warning(f"Article yöntemi başarısız: {e}")
@@ -888,18 +774,21 @@ class TwitterBrowser:
                     for selector in link_selectors:
                         try:
                             links = await self.page.query_selector_all(selector)
+                            logging.info(f"🔍 {selector}: {len(links)} link bulundu")
+                            
                             if links:
-                                for link in links[:5]:  # İlk 5 linki kontrol et
+                                for j, link in enumerate(links[:5]):  # İlk 5 linki kontrol et
                                     href = await link.get_attribute('href')
                                     if href and '/status/' in href and f'/{username}/' in href:
                                         tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
                                         if tweet_id and tweet_id.isdigit():
-                                            logging.info(f"✅ Tweet ID bulundu (Link): {tweet_id}")
+                                            logging.info(f"✅ Tweet ID bulundu (Link {j}): {tweet_id}")
                                             tweet_found = True
                                             break
                                 if tweet_found:
                                     break
-                        except:
+                        except Exception as e:
+                            logging.warning(f"⚠️ Selector {selector} başarısız: {e}")
                             continue
                 except Exception as e:
                     logging.warning(f"Link yöntemi başarısız: {e}")
@@ -908,18 +797,24 @@ class TwitterBrowser:
             if not tweet_found:
                 try:
                     time_elements = await self.page.query_selector_all('time')
-                    for time_elem in time_elements[:3]:
+                    logging.info(f"🔍 {len(time_elements)} time element bulundu")
+                    
+                    for k, time_elem in enumerate(time_elements[:3]):
                         try:
-                            parent_link = await time_elem.query_selector('xpath=ancestor::a[contains(@href, "/status/")]')
-                            if parent_link:
-                                href = await parent_link.get_attribute('href')
-                                if href and '/status/' in href:
-                                    tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
-                                    if tweet_id and tweet_id.isdigit():
-                                        logging.info(f"✅ Tweet ID bulundu (Time): {tweet_id}")
-                                        tweet_found = True
-                                        break
-                        except:
+                            # Parent link'i bul
+                            parent_article = await time_elem.query_selector('xpath=ancestor::article')
+                            if parent_article:
+                                tweet_link = await parent_article.query_selector('a[href*="/status/"]')
+                                if tweet_link:
+                                    href = await tweet_link.get_attribute('href')
+                                    if href and '/status/' in href:
+                                        tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
+                                        if tweet_id and tweet_id.isdigit():
+                                            logging.info(f"✅ Tweet ID bulundu (Time {k}): {tweet_id}")
+                                            tweet_found = True
+                                            break
+                        except Exception as e:
+                            logging.warning(f"⚠️ Time element {k} işlenirken hata: {e}")
                             continue
                 except Exception as e:
                     logging.warning(f"Time yöntemi başarısız: {e}")
@@ -1135,9 +1030,9 @@ async def main():
 
             # 2. İzlenen hesapların son tweetlerine reply at
             reply_count = 0
-            max_replies_per_cycle = 5  # Döngü başına maksimum reply sayısı
+            max_replies_per_cycle = 3  # Döngü başına maksimum reply sayısı (azalttık)
 
-            for account in accounts[:10]:  # İlk 10 hesabı kontrol et
+            for account in accounts[:8]:  # İlk 8 hesabı kontrol et (azalttık)
                 try:
                     if reply_count >= max_replies_per_cycle:
                         logging.info(f"✅ Maksimum reply sayısına ulaşıldı ({max_replies_per_cycle})")
@@ -1170,7 +1065,7 @@ async def main():
                                         if await twitter.reply_to_tweet(tweet_id, reply):
                                             reply_count += 1
                                             logging.info(f"✅ Reply gönderildi! ({reply_count}/{max_replies_per_cycle})")
-                                            await asyncio.sleep(random.uniform(30, 60))
+                                            await asyncio.sleep(random.uniform(60, 120))  # Reply arası daha uzun bekle
                                         else:
                                             logging.error("❌ Reply gönderilemedi")
                                     else:
