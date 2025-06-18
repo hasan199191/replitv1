@@ -446,8 +446,14 @@ class TwitterBrowser:
         return await self.direct_login()
         
     async def post_thread(self, thread_content):
-        """Tweet gönder - karakter limiti kontrolü ile"""
+        """Tweet gönder - STRING KONTROLÜ İLE"""
         try:
+            # TİP KONTROLÜ - ÇOK ÖNEMLİ!
+            if not isinstance(thread_content, str):
+                logging.error(f"❌ İçerik string değil! Tip: {type(thread_content)}")
+                logging.error(f"❌ İçerik: {thread_content}")
+                return False
+            
             # Karakter limiti kontrolü
             if len(thread_content) > 270:
                 logging.warning(f"⚠️ İçerik çok uzun ({len(thread_content)} karakter), kısaltılıyor...")
@@ -504,13 +510,35 @@ class TwitterBrowser:
                 logging.error("❌ Tweet compose alanı bulunamadı!")
                 return False
 
-            # İçeriği yaz
-            await compose_element.click()
-            await asyncio.sleep(1)
-            await compose_element.fill(thread_content)
-            await asyncio.sleep(2)
-            
-            logging.info("✅ Tweet içeriği yazıldı")
+            # İçeriği yaz - GÜÇLÜ YAKLAŞIM
+            try:
+                await compose_element.click()
+                await asyncio.sleep(1)
+                
+                # Önce alanı temizle
+                await self.page.keyboard.press("Control+A")
+                await asyncio.sleep(0.5)
+                await self.page.keyboard.press("Backspace")
+                await asyncio.sleep(1)
+                
+                # İçeriği yaz
+                await compose_element.fill(thread_content)
+                await asyncio.sleep(2)
+                
+                # Kontrol et
+                element_text = await compose_element.text_content()
+                if not element_text or len(element_text.strip()) == 0:
+                    logging.warning("⚠️ Fill çalışmadı, klavye ile yazılıyor...")
+                    await compose_element.click()
+                    await asyncio.sleep(1)
+                    await self.page.keyboard.type(thread_content, delay=50)
+                    await asyncio.sleep(2)
+                
+                logging.info("✅ Tweet içeriği yazıldı")
+                
+            except Exception as e:
+                logging.error(f"❌ İçerik yazma hatası: {e}")
+                return False
 
             # Tweet gönder butonunu bul
             post_selectors = [
@@ -903,12 +931,12 @@ async def main():
             
             for project in selected_projects:
                 content = await content_generator.generate_project_content(project)
-                if content:
+                if content and isinstance(content, str):  # STRING KONTROLÜ
                     logging.info(f"📝 Tweet paylaşılacak içerik: {content}")
                     await twitter.post_thread(content)
                     await asyncio.sleep(random.uniform(30, 60))  # İki tweet arası bekle
                 else:
-                    logging.warning("⚠️ İçerik üretilemedi, tweet atlanıyor.")
+                    logging.warning("⚠️ İçerik üretilemedi veya string değil, tweet atlanıyor.")
 
             # 2. İzlenen hesapların son tweetlerine reply at
             reply_count = 0
@@ -940,7 +968,7 @@ async def main():
                                     logging.info(f"✅ Tweet son 1 saat içinde, reply üretiliyor...")
                                     
                                     reply = await content_generator.generate_reply({'text': tweet_content, 'username': account})
-                                    if reply:
+                                    if reply and isinstance(reply, str):  # STRING KONTROLÜ
                                         logging.info(f"💬 Reply üretildi: {reply}")
                                         
                                         # Reply'ı gönder
@@ -951,7 +979,7 @@ async def main():
                                         else:
                                             logging.error("❌ Reply gönderilemedi")
                                     else:
-                                        logging.warning("⚠️ Reply üretilemedi")
+                                        logging.warning("⚠️ Reply üretilemedi veya string değil")
                                 else:
                                     logging.info(f"ℹ️ Tweet çok eski ({time_diff/3600:.1f} saat), atlanıyor")
                             else:
@@ -960,20 +988,3 @@ async def main():
                             logging.warning("⚠️ Tweet içeriği alınamadı")
                     else:
                         logging.warning(f"⚠️ {account} için tweet bulunamadı")
-                        
-                except Exception as e:
-                    logging.error(f"❌ {account} için reply hatası: {e}")
-                    continue
-
-            logging.info(f"✅ Reply döngüsü tamamlandı. Toplam reply: {reply_count}")
-
-            logging.info("⏳ 2 saat bekleniyor...")
-            print("⏳ 2 saat bekleniyor...")
-            await asyncio.sleep(2 * 60 * 60)  # 2 saat bekle
-        except Exception as e:
-            logging.error(f"❌ Ana döngü hatası: {e}")
-            print(f"❌ Ana döngü hatası: {e}")
-            await asyncio.sleep(60)
-
-if __name__ == "__main__":
-    asyncio.run(main())
