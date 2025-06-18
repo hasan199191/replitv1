@@ -14,6 +14,7 @@ import email
 from advanced_content_generator import AdvancedContentGenerator
 from health_server import start_health_server
 import threading
+from email_handler import EmailHandler
 
 # Windows konsol kodlama sorununu çöz
 if sys.platform == "win32":
@@ -37,93 +38,6 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
-class EmailHandler:
-    def __init__(self):
-        # Environment variable isimlerini düzelt
-        self.email = os.getenv('EMAIL_ADDRESS') or os.getenv('EMAIL_USER')
-        self.password = os.getenv('EMAIL_PASSWORD') or os.getenv('GMAIL_APP_PASSWORD') or os.getenv('EMAIL_PASS')
-        
-        # Debug için environment variables'ları logla
-        logging.info(f"📧 Environment variables check:")
-        logging.info(f"   EMAIL_ADDRESS: {'✅ Set' if os.getenv('EMAIL_ADDRESS') else '❌ Not set'}")
-        logging.info(f"   EMAIL_USER: {'✅ Set' if os.getenv('EMAIL_USER') else '❌ Not set'}")
-        logging.info(f"   EMAIL_PASSWORD: {'✅ Set' if os.getenv('EMAIL_PASSWORD') else '❌ Not set'}")
-        logging.info(f"   GMAIL_APP_PASSWORD: {'✅ Set' if os.getenv('GMAIL_APP_PASSWORD') else '❌ Not set'}")
-        logging.info(f"   EMAIL_PASS: {'✅ Set' if os.getenv('EMAIL_PASS') else '❌ Not set'}")
-        
-        logging.info(f"📧 Email Handler initialized for: {self.email}")
-        logging.info(f"📧 Password status: {'✅ Set' if self.password else '❌ Not set'}")
-        
-    async def get_verification_code(self, timeout=120):
-        """Gmail'den X.com doğrulama kodunu al"""
-        try:
-            logging.info("📧 Gmail'e bağlanıyor...")
-            
-            # Gmail IMAP bağlantısı
-            mail = imaplib.IMAP4_SSL('imap.gmail.com')
-            mail.login(self.email, self.password)
-            logging.info("✅ Gmail'e başarıyla bağlandı")
-            
-            mail.select('inbox')
-            
-            start_time = time.time()
-            
-            while time.time() - start_time < timeout:
-                try:
-                    # Son 5 dakikadaki emailleri ara
-                    since_date = (datetime.now() - timedelta(minutes=5)).strftime("%d-%b-%Y")
-                    
-                    # X.com'dan gelen emailleri ara
-                    search_criteria = f'(FROM "info@x.com" SUBJECT "Your X confirmation code") SINCE {since_date}'
-                    
-                    result, messages = mail.search(None, search_criteria)
-                    
-                    if messages[0]:
-                        email_ids = messages[0].split()
-                        logging.info(f"📧 {len(email_ids)} X confirmation email bulundu")
-                        
-                        # En son emaili al
-                        latest_email_id = email_ids[-1]
-                        
-                        # Email içeriğini al
-                        result, msg_data = mail.fetch(latest_email_id, '(RFC822)')
-                        email_body = msg_data[0][1]
-                        
-                        # Email'i parse et
-                        email_message = email.message_from_bytes(email_body)
-                        
-                        # Subject kontrol et
-                        subject = email_message.get('Subject', '')
-                        sender = email_message.get('From', '')
-                        
-                        logging.info(f"📧 Email bulundu - Subject: {subject}")
-                        logging.info(f"📧 Sender: {sender}")
-                        
-                        # Subject'den doğrudan kodu çıkar
-                        if "Your X confirmation code is " in subject:
-                            code_from_subject = subject.replace("Your X confirmation code is ", "").strip()
-                            if len(code_from_subject) >= 6 and len(code_from_subject) <= 8:
-                                logging.info(f"✅ Subject'den kod alındı: {code_from_subject}")
-                                mail.logout()
-                                return code_from_subject
-                        
-                    else:
-                        logging.info("📧 X confirmation emaili bulunamadı, bekleniyor...")
-                    
-                    await asyncio.sleep(8)
-                    
-                except Exception as e:
-                    logging.error(f"❌ Email kontrol hatası: {e}")
-                    await asyncio.sleep(8)
-            
-            mail.logout()
-            logging.warning("⚠️ Timeout: X doğrulama kodu bulunamadı")
-            return None
-            
-        except Exception as e:
-            logging.error(f"❌ Gmail bağlantı hatası: {e}")
-            return None
 
 class TwitterBrowser:
     def __init__(self, username, password, email_handler=None, content_generator=None):
@@ -431,15 +345,15 @@ class TwitterBrowser:
                 logging.error("❌ No email handler available")
                 return False
             
-            # Get verification code from email
-            verification_code = await self.email_handler.get_verification_code(timeout=120)
-            
+            # Get verification code from email - use async version
+            verification_code = await self.email_handler.get_twitter_verification_code(timeout=120)
+        
             if not verification_code:
                 logging.error("❌ Could not get verification code")
                 return False
-            
+        
             logging.info(f"✅ Got verification code: {verification_code}")
-            
+        
             # Enter verification code
             try:
                 code_input = await self.page.wait_for_selector(
@@ -455,7 +369,7 @@ class TwitterBrowser:
             except Exception as e:
                 logging.error(f"❌ Failed to enter verification code: {e}")
                 return False
-                
+            
         except Exception as e:
             logging.error(f"❌ Email verification error: {e}")
             return False
@@ -871,8 +785,8 @@ async def main():
                         logging.info(f"📝 Generating content for project {i+1}: {project['name']}")
                         content = await content_generator.generate_project_content(project)
                         
-                        if content and isinstance(content, (str, list)):
-                            logging.info(f"✅ Content generated, posting thread...")
+                        if content and isinstance(content, list) and len(content) > 0:
+                            logging.info(f"✅ Generated {len(content)} tweets for {project['name']}")
                             if await twitter.post_thread(content):
                                 logging.info(f"✅ Thread posted for {project['name']}")
                             else:
