@@ -315,8 +315,8 @@ class TwitterBrowser:
         """Email verification - EMAIL'DEN KOD AL - GELİŞTİRİLMİŞ"""
         try:
             self.logger.info("🔍 Checking for email verification...")
-    
-        # Email verification alanı var mı?
+
+            # Email verification alanı var mı?
             verification_input = None
             verification_selectors = [
                 'input[data-testid="ocfEnterTextTextInput"]',
@@ -325,50 +325,50 @@ class TwitterBrowser:
                 'input[type="text"][maxlength="6"]',
                 'input[type="text"][maxlength="8"]'
             ]
-        
+    
             for selector in verification_selectors:
                 try:
                     verification_input = await self.page.wait_for_selector(selector, timeout=3000)
                     if verification_input:
                         self.logger.info(f"✅ Found verification input with selector: {selector}")
                         break
-            except:
-                continue
-    
-        if not verification_input:
-            self.logger.info("ℹ️ No email verification needed")
-            return True
-    
-        self.logger.info("📧 Email verification required - getting code from email...")
-    
-        # Email'den doğrulama kodunu al
-        self.logger.info("📧 Retrieving verification code from email...")
-        verification_code = self.email_handler.get_twitter_verification_code(timeout=120)
-    
-        if verification_code:
-            self.logger.info(f"✅ Got verification code: {verification_code}")
+                except:
+                    continue
+
+            if not verification_input:
+                self.logger.info("ℹ️ No email verification needed")
+                return True
+
+            self.logger.info("📧 Email verification required - getting code from email...")
+
+            # Email'den doğrulama kodunu al
+            self.logger.info("📧 Retrieving verification code from email...")
+            verification_code = self.email_handler.get_twitter_verification_code(timeout=120)
+
+            if verification_code:
+                self.logger.info(f"✅ Got verification code: {verification_code}")
         
-            # Kodu gir
-            await verification_input.fill(verification_code)
-            await asyncio.sleep(1)
+                # Kodu gir
+                await verification_input.fill(verification_code)
+                await asyncio.sleep(1)
         
-            # Enter tuşuna bas
-            await self.page.keyboard.press('Enter')
-            self.logger.info("✅ Verification code submitted")
+                # Enter tuşuna bas
+                await self.page.keyboard.press('Enter')
+                self.logger.info("✅ Verification code submitted")
         
-            await asyncio.sleep(4)
-            return True
-        else:
-            self.logger.error("❌ Could not get verification code from email")
-            self.logger.info("⏳ Trying to continue without verification code...")
+                await asyncio.sleep(4)
+                return True
+            else:
+                self.logger.error("❌ Could not get verification code from email")
+                self.logger.info("⏳ Trying to continue without verification code...")
             
-            # Manuel giriş için biraz bekle
-            await asyncio.sleep(30)
-            return True
+                # Manuel giriş için biraz bekle
+                await asyncio.sleep(30)
+                return True
             
-    except Exception as e:
-        self.logger.error(f"❌ Email verification error: {e}")
-        return True
+        except Exception as e:
+            self.logger.error(f"❌ Email verification error: {e}")
+            return True
     
     async def login(self):
         """Ana login metodu"""
