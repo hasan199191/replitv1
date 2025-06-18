@@ -474,50 +474,87 @@ class TwitterBrowser:
             
             # Compose sayfasına git
             # Compose sayfasına git - YENİ URL
-            compose_urls = [
-                "https://x.com/compose/post",
-                "https://x.com/compose/tweet", 
-                "https://x.com/home"
+            # compose_urls = [
+            #     "https://x.com/compose/post",
+            #     "https://x.com/compose/tweet", 
+            #     "https://x.com/home"
+            # ]
+
+            # compose_success = False
+            # for url in compose_urls:
+            #     try:
+            #         await self.page.goto(url, timeout=30000)
+            #         await asyncio.sleep(4)
+                    
+            #         # Sayfa yüklendiğini kontrol et
+            #         if "compose" in self.page.url or "home" in self.page.url:
+            #             self.logger.info(f"✅ Successfully navigated to: {url}")
+            #             compose_success = True
+            #             break
+            #     except Exception as e:
+            #         self.logger.warning(f"⚠️ Failed to navigate to {url}: {e}")
+            #         continue
+
+            # if not compose_success:
+            #     self.logger.error("❌ Could not navigate to compose page")
+            #     return False
+
+            # # Tweet butonu varsa tıkla (home sayfasındaysak)
+            # if "home" in self.page.url:
+            #     try:
+            #         tweet_button = await self.page.wait_for_selector('a[data-testid="SideNav_NewTweet_Button"]', timeout=5000)
+            #         if tweet_button:
+            #             await tweet_button.click()
+            #             await asyncio.sleep(3)
+            #             self.logger.info("✅ Clicked tweet button from home")
+            #     except:
+            #         pass
+            # await asyncio.sleep(4)
+            
+            # Compose sayfasına git - YENİ YAKLAŞIM
+            self.logger.info("🏠 Going to home page first...")
+            await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
+
+            # Tweet butonuna tıkla
+            self.logger.info("🔍 Looking for tweet button...")
+            tweet_button_selectors = [
+                'a[data-testid="SideNav_NewTweet_Button"]',
+                'div[data-testid="SideNav_NewTweet_Button"]',
+                'button[data-testid="SideNav_NewTweet_Button"]',
+                '[aria-label="Post"]',
+                '[aria-label="Tweet"]'
             ]
 
-            compose_success = False
-            for url in compose_urls:
+            tweet_button_found = False
+            for selector in tweet_button_selectors:
                 try:
-                    await self.page.goto(url, timeout=30000)
-                    await asyncio.sleep(4)
-                    
-                    # Sayfa yüklendiğini kontrol et
-                    if "compose" in self.page.url or "home" in self.page.url:
-                        self.logger.info(f"✅ Successfully navigated to: {url}")
-                        compose_success = True
+                    tweet_button = await self.page.wait_for_selector(selector, timeout=5000)
+                    if tweet_button:
+                        self.logger.info(f"✅ Found tweet button: {selector}")
+                        await tweet_button.click()
+                        await asyncio.sleep(4)
+                        tweet_button_found = True
                         break
-                except Exception as e:
-                    self.logger.warning(f"⚠️ Failed to navigate to {url}: {e}")
+                except:
                     continue
 
-            if not compose_success:
-                self.logger.error("❌ Could not navigate to compose page")
+            if not tweet_button_found:
+                self.logger.error("❌ Could not find tweet button")
                 return False
 
-            # Tweet butonu varsa tıkla (home sayfasındaysak)
-            if "home" in self.page.url:
-                try:
-                    tweet_button = await self.page.wait_for_selector('a[data-testid="SideNav_NewTweet_Button"]', timeout=5000)
-                    if tweet_button:
-                        await tweet_button.click()
-                        await asyncio.sleep(3)
-                        self.logger.info("✅ Clicked tweet button from home")
-                except:
-                    pass
-            await asyncio.sleep(4)
+            self.logger.info("✅ Tweet compose modal should be open")
             
             # İlk tweet'i yaz
             # İlk tweet'i yaz - GÜNCEL SELECTOR'LAR
             first_tweet_selectors = [
                 'div[aria-label="Tweet text"]',  # Ana Twitter selector
+                'div[aria-label="Post text"]',   # Yeni Post text
+                'div[contenteditable="true"][aria-label*="What"]',  # "What's happening"
+                'div[contenteditable="true"][data-testid*="tweet"]',  # Tweet testid
                 'div[data-testid="tweetTextarea_0"]',  # Fallback
-                'div[contenteditable="true"][aria-label*="Tweet"]',  # Fallback
-                'div[role="textbox"][contenteditable="true"]'  # Fallback
+                'div[contenteditable="true"][role="textbox"]',  # Role textbox
+                'div[contenteditable="true"]'  # Son fallback
             ]
             
             first_tweet_area = None
@@ -539,23 +576,9 @@ class TwitterBrowser:
                     continue
 
             if not first_tweet_area:
-                # Debug: Sayfadaki tüm input alanlarını listele
-                self.logger.error("❌ Could not find tweet area. Debugging page elements...")
-                try:
-                    all_inputs = await self.page.query_selector_all('div[contenteditable="true"], textarea, input[type="text"]')
-                    self.logger.info(f"📋 Found {len(all_inputs)} input elements on page")
-                    
-                    for i, input_elem in enumerate(all_inputs[:5]):  # İlk 5'ini kontrol et
-                        try:
-                            tag_name = await input_elem.evaluate('el => el.tagName')
-                            aria_label = await input_elem.get_attribute('aria-label') or 'No aria-label'
-                            data_testid = await input_elem.get_attribute('data-testid') or 'No data-testid'
-                            self.logger.info(f"   Input {i+1}: {tag_name}, aria-label='{aria_label}', data-testid='{data_testid}'")
-                        except:
-                            continue
-                except Exception as e:
-                    self.logger.error(f"❌ Debug failed: {e}")
-                
+                # Debug: Sayfadaki tüm elementleri analiz et
+                self.logger.error("❌ Could not find tweet area. Running detailed analysis...")
+                await self.debug_page_elements()
                 return False
             
             # İlk tweet'i yaz
@@ -994,3 +1017,50 @@ class TwitterBrowser:
         except Exception as e:
             self.logger.error(f"❌ Error replying to latest tweet for @{username}: {e}")
             return False
+    
+    async def debug_page_elements(self):
+        """Debug: Sayfadaki elementleri analiz et"""
+        try:
+            self.logger.info("🔍 DEBUG: Analyzing page elements...")
+            
+            # Sayfa URL'i
+            current_url = self.page.url
+            self.logger.info(f"📍 Current URL: {current_url}")
+            
+            # Sayfa başlığı
+            title = await self.page.title()
+            self.logger.info(f"📄 Page title: {title}")
+            
+            # Tüm contenteditable elementler
+            editable_elements = await self.page.query_selector_all('[contenteditable="true"]')
+            self.logger.info(f"✏️ Found {len(editable_elements)} contenteditable elements")
+            
+            for i, elem in enumerate(editable_elements[:5]):
+                try:
+                    aria_label = await elem.get_attribute('aria-label') or 'No aria-label'
+                    data_testid = await elem.get_attribute('data-testid') or 'No data-testid'
+                    role = await elem.get_attribute('role') or 'No role'
+                    tag_name = await elem.evaluate('el => el.tagName')
+                    self.logger.info(f"   Element {i+1}: {tag_name}, aria-label='{aria_label}', data-testid='{data_testid}', role='{role}'")
+                except:
+                    continue
+            
+            # Tüm button elementler
+            buttons = await self.page.query_selector_all('button, div[role="button"], a[role="button"]')
+            self.logger.info(f"🔘 Found {len(buttons)} button elements")
+            
+            # Tweet ile ilgili elementler
+            tweet_elements = await self.page.query_selector_all('[data-testid*="tweet"], [aria-label*="Tweet"], [aria-label*="Post"]')
+            self.logger.info(f"🐦 Found {len(tweet_elements)} tweet-related elements")
+            
+            for i, elem in enumerate(tweet_elements[:3]):
+                try:
+                    aria_label = await elem.get_attribute('aria-label') or 'No aria-label'
+                    data_testid = await elem.get_attribute('data-testid') or 'No data-testid'
+                    tag_name = await elem.evaluate('el => el.tagName')
+                    self.logger.info(f"   Tweet element {i+1}: {tag_name}, aria-label='{aria_label}', data-testid='{data_testid}'")
+                except:
+                    continue
+                
+        except Exception as e:
+            self.logger.error(f"❌ Debug failed: {e}")
