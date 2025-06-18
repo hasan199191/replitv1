@@ -270,30 +270,32 @@ class TwitterBrowser:
             await asyncio.sleep(3)  # Biraz daha bekle
         
             # Method 1: Direkt compose area ara
+            self.logger.info("🔍 Method 1: Looking for compose area directly...")
             compose_element = await self.find_compose_area_direct()
-        
+    
         # Method 2: Tweet butonuna tıklayarak compose area aç
         if not compose_element:
             self.logger.info("🔄 Method 1 failed, trying to click tweet button...")
             compose_element = await self.find_compose_area_via_button()
-        
+    
         # Method 3: Klavye kısayolu ile compose area aç
         if not compose_element:
             self.logger.info("🔄 Method 2 failed, trying keyboard shortcut...")
             compose_element = await self.find_compose_area_via_shortcut()
-        
+    
         # Method 4: Sayfayı yenile ve tekrar dene
         if not compose_element:
             self.logger.info("🔄 Method 3 failed, refreshing page...")
             await self.page.reload(wait_until="domcontentloaded")
             await asyncio.sleep(3)
             compose_element = await self.find_compose_area_direct()
-        
+    
         if not compose_element:
             self.logger.error("❌ Could not find tweet compose area with any method")
             return False
 
         # Tweet içeriğini yaz
+        self.logger.info("✅ Found compose area, entering content...")
         await compose_element.click()
         await asyncio.sleep(1)
         
@@ -354,8 +356,8 @@ class TwitterBrowser:
                         if is_editable:
                             self.logger.info(f"✅ Found compose area: {selector}")
                             return element
-                except:
-                    continue
+            except:
+                continue
             
             return None
             
@@ -571,9 +573,9 @@ class TwitterBrowser:
             self.logger.warning(f"⚠️ Could not find tweets for @{username}: {e}")
             return []
     
-    except Exception as e:
-        self.logger.error(f"❌ Error getting recent tweets for @{username}: {e}")
-        return []
+        except Exception as e:
+            self.logger.error(f"❌ Error getting recent tweets for @{username}: {e}")
+            return []
     
     async def close(self):
         """Browser'ı kapat"""
