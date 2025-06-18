@@ -8,22 +8,11 @@ from typing import Optional
 
 class EmailHandler:
     def __init__(self):
-        self.email_user = "hasanacikgoz91@gmail.com"
-        # Gmail App Password'u boşluksuz al
-        app_password = os.environ.get('GMAIL_APP_PASSWORD', '')
-        if app_password:
-            # Boşlukları kaldır
-            self.email_pass = app_password.replace(' ', '')
-            self.logger = logging.getLogger('EmailHandler')
-            self.logger.info(f"🔐 Using Gmail App Password (length: {len(self.email_pass)})")
-        else:
-            # Fallback normal şifre
-            self.email_pass = "Nuray1965+"
-            self.logger = logging.getLogger('EmailHandler')
-            self.logger.warning("⚠️ Using regular password - App Password recommended!")
-        
+        self.email_user = os.environ.get('EMAIL_ADDRESS', "hasanacikgoz91@gmail.com")
+        self.email_pass = os.environ.get('EMAIL_PASSWORD', "Nuray1965+")
         self.imap_server = "imap.gmail.com"
         self.imap_port = 993
+        self.logger = logging.getLogger('EmailHandler')
         self.setup_logging()
         
     def setup_logging(self):
@@ -35,9 +24,16 @@ class EmailHandler:
             self.logger.addHandler(handler)
     
     def get_twitter_verification_code(self, timeout=90) -> Optional[str]:
-        """Twitter'dan gelen doğrulama kodunu email'den al - BASİTLEŞTİRİLMİŞ"""
+        """Twitter'dan gelen doğrulama kodunu email'den al"""
         try:
-            self.logger.info("📧 Connecting to Gmail for verification code...")
+            # Gmail App Password'u kullan, yoksa normal şifreyi kullan
+            self.email_pass = os.environ.get('GMAIL_APP_PASSWORD') or os.environ.get('EMAIL_PASSWORD', "Nuray1965+")
+            
+            if not self.email_pass:
+                self.logger.error("❌ No email password available!")
+                return None
+        
+            self.logger.info("📧 Connecting to Gmail with direct password...")
             
             start_time = time.time()
             
@@ -48,14 +44,16 @@ class EmailHandler:
                     mail.login(self.email_user, self.email_pass)
                     mail.select('inbox')
                     
-                    # Son 50 email'i al (basit arama)
-                    result, data = mail.search(None, 'ALL')
+                    # Son 10 dakikadaki Twitter emaillerini ara
+                    search_criteria = '(FROM "verify@twitter.com" OR FROM "info@twitter.com" OR FROM "noreply@twitter.com" OR FROM "account@twitter.com") SINCE "' + time.strftime('%d-%b-%Y', time.gmtime(time.time() - 600)) + '"'
+                    
+                    result, data = mail.search(None, search_criteria)
                     
                     if data[0]:
                         email_ids = data[0].split()
                         
-                        # En son 50 email'i kontrol et
-                        for email_id in reversed(email_ids[-50:]):
+                        # En son email'leri kontrol et
+                        for email_id in reversed(email_ids[-10:]):
                             result, data = mail.fetch(email_id, '(RFC822)')
                             
                             if data[0]:
@@ -63,12 +61,10 @@ class EmailHandler:
                                 
                                 # Email konusunu kontrol et
                                 subject = email_message.get('Subject', '')
-                                sender = email_message.get('From', '')
+                                self.logger.info(f"📧 Checking email: {subject}")
                                 
-                                # Twitter/X doğrulama email'i mi?
-                                if any(keyword in subject.lower() for keyword in ['verification', 'confirm', 'code', 'verify', 'security', 'login', 'twitter', 'x confirmation']) or any(domain in sender.lower() for domain in ['twitter.com', 'x.com']):
-                                    
-                                    self.logger.info(f"📧 Found potential verification email: {subject}")
+                                # Twitter doğrulama email'i mi?
+                                if any(keyword in subject.lower() for keyword in ['verification', 'confirm', 'code', 'verify', 'security', 'login']):
                                     
                                     # Email içeriğini al
                                     body = self.get_email_body(email_message)
@@ -127,56 +123,31 @@ class EmailHandler:
             return ""
     
     def extract_verification_code(self, email_body):
-        """Email içeriğinden doğrulama kodunu çıkar - X FORMAT DESTEKLİ"""
+        """Email içeriğinden doğrulama kodunu çıkar"""
         try:
-            # X/Twitter'ın yeni formatları dahil
+            # Farklı doğrulama kodu formatları
             patterns = [
-                # X confirmation code formatları
-                r'Your X confirmation code is\s*([a-zA-Z0-9]{6,8})',
-                r'confirmation code is\s*([a-zA-Z0-9]{6,8})',
-                r'single-use code[.\s]*([a-zA-Z0-9]{6,8})',
-                
-                # Geleneksel formatlar
-                r'verification code[:\s]*([0-9]{6})',
-                r'code[:\s]*([0-9]{6})',
-                r'confirm[:\s]*([0-9]{6})',
-                r'([0-9]{6})',
-                r'([0-9]{4})',
-                r'([0-9]{8})',
-                
-                # Alfanumerik kodlar
-                r'([a-zA-Z0-9]{8})',
-                r'([a-zA-Z0-9]{6})',
+                r'verification code[:\s]*([0-9]{6})',  # verification code: 123456
+                r'code[:\s]*([0-9]{6})',               # code: 123456
+                r'confirm[:\s]*([0-9]{6})',            # confirm: 123456
+                r'([0-9]{6})',                         # sadece 6 haneli sayı
+                r'verification code[:\s]*([0-9]{4})',  # 4 haneli kod
+                r'code[:\s]*([0-9]{4})',               # 4 haneli kod
+                r'([0-9]{4})',                         # sadece 4 haneli sayı
+                r'([0-9]{8})',                         # 8 haneli kod
             ]
             
             email_lower = email_body.lower()
             
-            # Önce X spesifik pattern'leri dene
-            x_patterns = [
-                r'your x confirmation code is\s*([a-zA-Z0-9]{6,8})',
-                r'confirmation code is\s*([a-zA-Z0-9]{6,8})',
-                r'single-use code[.\s]*([a-zA-Z0-9]{6,8})',
-            ]
-            
-            for pattern in x_patterns:
-                matches = re.findall(pattern, email_lower, re.IGNORECASE)
-                if matches:
-                    code = matches[0]
-                    if len(code) in [4, 6, 8]:
-                        self.logger.info(f"✅ Found X verification code with pattern: {pattern}")
-                        return code
-            
-            # Sonra genel pattern'leri dene
             for pattern in patterns:
                 matches = re.findall(pattern, email_lower, re.IGNORECASE)
                 
                 if matches:
-                    # En uzun kodu al
+                    # En uzun kodu al (genellikle doğrulama kodu)
                     code = max(matches, key=len)
                     
                     # Kod uzunluğu kontrolü
                     if len(code) in [4, 6, 8]:
-                        self.logger.info(f"✅ Found verification code with pattern: {pattern}")
                         return code
             
             return None
