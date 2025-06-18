@@ -156,82 +156,122 @@ class TwitterBrowser:
         return await self.quick_login_check()
     
     async def direct_login(self):
-        """DİREKT ve HIZLI login süreci"""
+        """DİREKT ve HIZLI login süreci - GELİŞTİRİLMİŞ"""
         try:
             self.logger.info("⚡ Starting DIRECT login...")
             self.login_attempts += 1
             self.last_login_attempt = time.time()
-            
+        
             # Login sayfasına git
             await self.page.goto("https://twitter.com/i/flow/login", 
                                 wait_until="domcontentloaded", 
                                 timeout=15000)
-            
-            await asyncio.sleep(2)
-            
+        
+            await asyncio.sleep(3)
+        
             # 1. USERNAME GİR
             username = os.environ.get('TWITTER_USERNAME') or os.environ.get('EMAIL_USER')
             self.logger.info(f"⚡ Entering username: {username}")
-            
+        
             # Username alanını bul ve doldur
             username_selectors = [
                 'input[autocomplete="username"]',
                 'input[name="text"]',
                 'input[type="text"]'
             ]
-            
+        
+            username_entered = False
             for selector in username_selectors:
                 try:
                     await self.page.wait_for_selector(selector, timeout=5000)
                     await self.page.fill(selector, username)
                     self.logger.info("⚡ Username entered")
+                    username_entered = True
                     break
                 except:
                     continue
-            
+        
+            if not username_entered:
+                self.logger.error("❌ Could not enter username")
+                return False
+        
             # Enter tuşuna bas (Next butonu yerine)
             await self.page.keyboard.press('Enter')
-            self.logger.info("⚡ Enter pressed")
-            await asyncio.sleep(2)
-            
-            # 2. USERNAME VERIFICATION (varsa)
+            self.logger.info("⚡ Enter pressed after username")
+            await asyncio.sleep(3)
+        
+            # 2. EMAIL VERIFICATION KONTROLÜ (username sonrası)
+            self.logger.info("🔍 Checking for email verification after username...")
+        
+            # Email verification alanı var mı kontrol et
+            email_verification_needed = False
+            try:
+                # Email verification input alanını ara
+                email_input = await self.page.wait_for_selector(
+                    'input[data-testid="ocfEnterTextTextInput"]', 
+                    timeout=5000
+                )
+                if email_input:
+                    self.logger.info("📧 Email verification required after username")
+                    email_verification_needed = True
+                
+                    # Email adresini gir
+                    email_address = os.environ.get('EMAIL_USER')
+                    await email_input.fill(email_address)
+                    self.logger.info(f"📧 Email entered: {email_address}")
+                
+                    # Enter tuşuna bas
+                    await self.page.keyboard.press('Enter')
+                    await asyncio.sleep(3)
+                
+            except:
+                self.logger.info("ℹ️ No email verification needed after username")
+        
+            # 3. USERNAME VERIFICATION (varsa - bazı durumlarda tekrar username ister)
             await self.handle_username_verification()
-            
-            # 3. PASSWORD GİR - DİREKT YAKLAŞIM
+        
+            # 4. PASSWORD GİR - GELİŞTİRİLMİŞ YAKLAŞIM
             password = os.environ.get('TWITTER_PASSWORD')
             self.logger.info("⚡ Looking for password field...")
-            
+        
             # Password alanını bekle ve direkt doldur
-            try:
-                # Kısa timeout ile password alanını bekle
-                await self.page.wait_for_selector('input[type="password"]', timeout=8000)
-                
-                # Direkt password'u yaz (click yapmadan)
-                await self.page.fill('input[type="password"]', password)
-                self.logger.info("⚡ Password entered directly")
-                
-                # Hemen Enter tuşuna bas
-                await self.page.keyboard.press('Enter')
-                self.logger.info("⚡ Enter pressed for login")
-                
-            except Exception as e:
-                self.logger.error(f"❌ Password field error: {e}")
+            password_entered = False
+            password_selectors = [
+                'input[type="password"]',
+                'input[name="password"]',
+                'input[autocomplete="current-password"]'
+            ]
+        
+            for selector in password_selectors:
+                try:
+                    await self.page.wait_for_selector(selector, timeout=8000)
+                    await self.page.fill(selector, password)
+                    self.logger.info("⚡ Password entered")
+                    password_entered = True
+                    break
+                except:
+                    continue
+        
+            if not password_entered:
+                self.logger.error("❌ Could not find or fill password field")
                 return False
-            
-            # Login sonrası kısa bekleme
-            await asyncio.sleep(3)
-            
-            # 4. EMAIL VERIFICATION (varsa)
+        
+            # Hemen Enter tuşuna bas
+            await self.page.keyboard.press('Enter')
+            self.logger.info("⚡ Enter pressed for login")
+            await asyncio.sleep(4)
+        
+            # 5. EMAIL VERIFICATION (login sonrası - eğer gerekirse)
             await self.handle_email_verification()
-            
-            # 5. LOGIN KONTROLÜ
+        
+            # 6. LOGIN KONTROLÜ
             if await self.quick_login_check():
                 self.logger.info("🎉 DIRECT LOGIN SUCCESSFUL!")
                 self.login_attempts = 0
                 return True
             else:
                 # Bir kez daha dene
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
                 if await self.quick_login_check():
                     self.logger.info("🎉 DIRECT LOGIN SUCCESSFUL (retry)!")
                     self.login_attempts = 0
@@ -239,7 +279,7 @@ class TwitterBrowser:
                 else:
                     self.logger.error("❌ DIRECT LOGIN FAILED")
                     return False
-                
+            
         except Exception as e:
             self.logger.error(f"❌ Direct login error: {e}")
             return False
@@ -272,52 +312,63 @@ class TwitterBrowser:
             return True
     
     async def handle_email_verification(self):
-        """Email verification - EMAIL'DEN KOD AL"""
+        """Email verification - EMAIL'DEN KOD AL - GELİŞTİRİLMİŞ"""
         try:
             self.logger.info("🔍 Checking for email verification...")
-        
-            # Email verification alanı var mı?
+    
+        # Email verification alanı var mı?
             verification_input = None
-            try:
-                verification_input = await self.page.wait_for_selector(
-                    'input[data-testid="ocfEnterTextTextInput"]', 
-                    timeout=3000
-                )
+            verification_selectors = [
+                'input[data-testid="ocfEnterTextTextInput"]',
+                'input[placeholder*="code"]',
+                'input[placeholder*="verification"]',
+                'input[type="text"][maxlength="6"]',
+                'input[type="text"][maxlength="8"]'
+            ]
+        
+            for selector in verification_selectors:
+                try:
+                    verification_input = await self.page.wait_for_selector(selector, timeout=3000)
+                    if verification_input:
+                        self.logger.info(f"✅ Found verification input with selector: {selector}")
+                        break
             except:
-                self.logger.info("ℹ️ No email verification needed")
-                return True
-        
-            if not verification_input:
-                return True
-        
-            self.logger.info("📧 Email verification required - getting code from email...")
-        
-            # Email'den doğrulama kodunu al (şifre otomatik kullanılacak)
-            self.logger.info("📧 Retrieving verification code from email...")
-            verification_code = self.email_handler.get_twitter_verification_code(timeout=90)
-        
-            if verification_code:
-                self.logger.info(f"✅ Got verification code: {verification_code}")
-            
-                # Kodu gir
-                await verification_input.fill(verification_code)
-                await asyncio.sleep(1)
-            
-                # Enter tuşuna bas
-                await self.page.keyboard.press('Enter')
-                self.logger.info("✅ Verification code submitted")
-            
-                await asyncio.sleep(3)
-                return True
-            else:
-                self.logger.error("❌ Could not get verification code from email")
-                self.logger.info("⏳ Please enter verification code manually...")
-                await asyncio.sleep(60)  # Manuel giriş için bekle
-                return True
-                
-        except Exception as e:
-            self.logger.error(f"❌ Email verification error: {e}")
+                continue
+    
+        if not verification_input:
+            self.logger.info("ℹ️ No email verification needed")
             return True
+    
+        self.logger.info("📧 Email verification required - getting code from email...")
+    
+        # Email'den doğrulama kodunu al
+        self.logger.info("📧 Retrieving verification code from email...")
+        verification_code = self.email_handler.get_twitter_verification_code(timeout=120)
+    
+        if verification_code:
+            self.logger.info(f"✅ Got verification code: {verification_code}")
+        
+            # Kodu gir
+            await verification_input.fill(verification_code)
+            await asyncio.sleep(1)
+        
+            # Enter tuşuna bas
+            await self.page.keyboard.press('Enter')
+            self.logger.info("✅ Verification code submitted")
+        
+            await asyncio.sleep(4)
+            return True
+        else:
+            self.logger.error("❌ Could not get verification code from email")
+            self.logger.info("⏳ Trying to continue without verification code...")
+            
+            # Manuel giriş için biraz bekle
+            await asyncio.sleep(30)
+            return True
+            
+    except Exception as e:
+        self.logger.error(f"❌ Email verification error: {e}")
+        return True
     
     async def login(self):
         """Ana login metodu"""
