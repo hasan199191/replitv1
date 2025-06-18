@@ -653,3 +653,224 @@ class TwitterBrowser:
             self.logger.info("🔒 Browser closed")
         except Exception as e:
             self.logger.error(f"❌ Error closing browser: {e}")
+
+    async def get_latest_tweet_id(self, username):
+        """Bir kullanıcının son tweet ID'sini al - İYİLEŞTİRİLMİŞ"""
+        try:
+            self.logger.info(f"🔍 Getting latest tweet for @{username}")
+        
+            # Kullanıcı profiline git
+            await self.page.goto(f"https://x.com/{username}", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
+        
+            # Sayfanın tam yüklenmesini bekle
+            try:
+                await self.page.wait_for_selector('[data-testid="primaryColumn"]', timeout=10000)
+            except:
+                self.logger.warning("Primary column yüklenemedi, devam ediliyor...")
+        
+            # Tweet elementlerini bul - birden fazla yöntem
+            tweet_found = False
+            tweet_id = None
+        
+            # Yöntem 1: Article elementleri
+            try:
+                articles = await self.page.query_selector_all('article[data-testid="tweet"]')
+                if articles and len(articles) > 0:
+                    for article in articles[:3]:  # İlk 3 tweet'i kontrol et
+                        try:
+                            tweet_link = await article.query_selector('a[href*="/status/"]')
+                            if tweet_link:
+                                href = await tweet_link.get_attribute('href')
+                                if href and '/status/' in href:
+                                    tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
+                                    if tweet_id and tweet_id.isdigit():
+                                        self.logger.info(f"✅ Tweet ID bulundu (Article): {tweet_id}")
+                                        tweet_found = True
+                                        break
+                        except:
+                            continue
+            except Exception as e:
+                self.logger.warning(f"Article yöntemi başarısız: {e}")
+        
+            # Yöntem 2: Direct link selectors
+            if not tweet_found:
+                try:
+                    link_selectors = [
+                        'a[href*="/status/"]',
+                        '[data-testid="tweet"] a[href*="/status/"]',
+                        'article a[href*="/status/"]'
+                    ]
+                
+                    for selector in link_selectors:
+                        try:
+                            links = await self.page.query_selector_all(selector)
+                            if links:
+                                for link in links[:5]:  # İlk 5 linki kontrol et
+                                    href = await link.get_attribute('href')
+                                    if href and '/status/' in href and f'/{username}/' in href:
+                                        tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
+                                        if tweet_id and tweet_id.isdigit():
+                                            self.logger.info(f"✅ Tweet ID bulundu (Link): {tweet_id}")
+                                            tweet_found = True
+                                            break
+                                if tweet_found:
+                                    break
+                        except:
+                            continue
+                except Exception as e:
+                    self.logger.warning(f"Link yöntemi başarısız: {e}")
+        
+            # Yöntem 3: Time elements
+            if not tweet_found:
+                try:
+                    time_elements = await self.page.query_selector_all('time')
+                    for time_elem in time_elements[:3]:
+                        try:
+                            parent_link = await time_elem.query_selector('xpath=ancestor::a[contains(@href, "/status/")]')
+                            if parent_link:
+                                href = await parent_link.get_attribute('href')
+                                if href and '/status/' in href:
+                                    tweet_id = href.split('/status/')[1].split('/')[0].split('?')[0]
+                                    if tweet_id and tweet_id.isdigit():
+                                        self.logger.info(f"✅ Tweet ID bulundu (Time): {tweet_id}")
+                                        tweet_found = True
+                                        break
+                        except:
+                            continue
+            except Exception as e:
+                self.logger.warning(f"Time yöntemi başarısız: {e}")
+        
+            if tweet_found and tweet_id:
+                self.logger.info(f"✅ @{username} için tweet ID: {tweet_id}")
+                return tweet_id
+            else:
+                self.logger.warning(f"⚠️ @{username} için tweet bulunamadı")
+                return None
+            
+        except Exception as e:
+            self.logger.error(f"❌ @{username} için tweet ID alma hatası: {e}")
+            return None
+
+    async def get_tweet_content(self, tweet_id):
+        """Tweet içeriğini al - İYİLEŞTİRİLMİŞ"""
+        try:
+            self.logger.info(f"📄 Getting content for tweet: {tweet_id}")
+        
+            await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
+        
+            # Tweet içeriğini bul - birden fazla yöntem
+            content = None
+        
+            # Yöntem 1: Standard tweet text selector
+            content_selectors = [
+                '[data-testid="tweetText"]',
+                'div[data-testid="tweetText"]',
+                'article[data-testid="tweet"] [data-testid="tweetText"]'
+            ]
+        
+            for selector in content_selectors:
+                try:
+                    content_element = await self.page.wait_for_selector(selector, timeout=8000)
+                    if content_element:
+                        content = await content_element.inner_text()
+                        if content and content.strip():
+                            self.logger.info(f"✅ Tweet içeriği bulundu: {content[:100]}...")
+                            return content.strip()
+                except:
+                    continue
+        
+            # Yöntem 2: Lang attribute ile
+            try:
+                lang_elements = await self.page.query_selector_all('div[lang]')
+                for elem in lang_elements:
+                    text = await elem.inner_text()
+                    if text and len(text) > 10:  # Minimum content length
+                        content = text.strip()
+                        self.logger.info(f"✅ Tweet içeriği bulundu (lang): {content[:100]}...")
+                        return content
+        except:
+            pass
+        
+        # Yöntem 3: Article içindeki text
+        try:
+            article = await self.page.query_selector('article[data-testid="tweet"]')
+            if article:
+                text_content = await article.inner_text()
+                # Tweet text'ini ayıkla (username, time vs. hariç)
+                lines = text_content.split('\n')
+                for line in lines:
+                    if len(line) > 20 and not line.startswith('@') and not 'ago' in line:
+                        content = line.strip()
+                        self.logger.info(f"✅ Tweet içeriği bulundu (article): {content[:100]}...")
+                        return content
+        except:
+            pass
+        
+        self.logger.warning(f"⚠️ Tweet içeriği bulunamadı: {tweet_id}")
+        return None
+        
+    except Exception as e:
+        self.logger.error(f"❌ Tweet içeriği alma hatası: {e}")
+        return None
+
+    async def get_tweet_time(self, tweet_id):
+        """Tweet'in atılma zamanını al - İYİLEŞTİRİLMİŞ"""
+        try:
+            self.logger.info(f"🕐 Getting time for tweet: {tweet_id}")
+        
+            # Zaten tweet sayfasındaysak tekrar gitmeye gerek yok
+            current_url = self.page.url
+            if f"/status/{tweet_id}" not in current_url:
+                await self.page.goto(f"https://x.com/i/web/status/{tweet_id}", wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
+        
+            # Zaman damgası elementini bul
+            time_selectors = [
+                'time[datetime]',
+                'article time[datetime]',
+                '[data-testid="tweet"] time'
+            ]
+        
+            for selector in time_selectors:
+                try:
+                    time_element = await self.page.wait_for_selector(selector, timeout=8000)
+                    if time_element:
+                        datetime_str = await time_element.get_attribute('datetime')
+                        if datetime_str:
+                            tweet_time = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+                            self.logger.info(f"✅ Tweet zamanı: {tweet_time}")
+                            return tweet_time
+            except:
+                continue
+        
+            # Alternatif: Relative time'dan çıkarım yap
+            try:
+                time_elements = await self.page.query_selector_all('time')
+                for time_elem in time_elements:
+                    time_text = await time_elem.inner_text()
+                    if 'h' in time_text or 'm' in time_text or 's' in time_text:
+                        # Yaklaşık zaman hesapla
+                        now = datetime.now()
+                        if 'h' in time_text:
+                            hours = int(time_text.replace('h', '').strip())
+                            tweet_time = now - timedelta(hours=hours)
+                        elif 'm' in time_text:
+                            minutes = int(time_text.replace('m', '').strip())
+                            tweet_time = now - timedelta(minutes=minutes)
+                        else:
+                            tweet_time = now  # Very recent
+                    
+                    self.logger.info(f"✅ Tweet zamanı (yaklaşık): {tweet_time}")
+                    return tweet_time
+        except:
+            pass
+        
+        self.logger.warning(f"⚠️ Tweet zamanı bulunamadı: {tweet_id}")
+        # Varsayılan olarak şu anki zamanı döndür (1 saat içinde sayılsın)
+        return datetime.now()
+        
+    except Exception as e:
+        self.logger.error(f"❌ Tweet zamanı alma hatası: {e}")
+        return datetime.now()
