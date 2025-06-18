@@ -198,42 +198,54 @@ class TwitterBrowser:
             return False
     
     async def quick_login_check(self):
-        """HIZLI login durumu kontrolü"""
+        """DÜZELTME: DOĞRU login durumu kontrolü"""
         try:
             self.logger.info("⚡ Quick login check...")
             
             # Home sayfasına git
-            await self.page.goto("https://twitter.com/home", 
+            await self.page.goto("https://x.com/home", 
                                wait_until="domcontentloaded", 
-                               timeout=10000)
+                               timeout=15000)
             
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)
             
-            # Tweet butonu var mı kontrol et
-            try:
-                element = await self.page.wait_for_selector(
-                    'a[data-testid="SideNav_NewTweet_Button"]', 
-                    timeout=3000
-                )
-                if element:
-                    self.logger.info("✅ Already logged in!")
-                    self.is_logged_in = True
-                    return True
-            except:
-                pass
-            
-            # URL kontrolü
+            # URL kontrolü - DÜZELTME: Login sayfasında mıyız?
             current_url = self.page.url
+            self.logger.info(f"📍 Current URL: {current_url}")
+            
+            # Login sayfasındaysak, login olmamışız
+            if "login" in current_url or "flow" in current_url:
+                self.logger.info("❌ Redirected to login page - not logged in")
+                self.is_logged_in = False
+                return False
+            
+            # Home sayfasındaysak ve login sayfası değilse
             if "/home" in current_url and "login" not in current_url:
-                self.logger.info("✅ Login confirmed by URL!")
+                # Tweet butonu var mı kontrol et
+                try:
+                    element = await self.page.wait_for_selector(
+                        'a[data-testid="SideNav_NewTweet_Button"]', 
+                        timeout=5000
+                    )
+                    if element:
+                        self.logger.info("✅ Already logged in - tweet button found!")
+                        self.is_logged_in = True
+                        return True
+                except:
+                    pass
+                
+                # Tweet butonu yoksa da URL'e göre login olmuş sayalım
+                self.logger.info("✅ Login confirmed by URL (no login redirect)!")
                 self.is_logged_in = True
                 return True
             
             self.logger.info("❌ Not logged in")
+            self.is_logged_in = False
             return False
             
         except Exception as e:
             self.logger.warning(f"⚠️ Quick check failed: {e}")
+            self.is_logged_in = False
             return False
     
     async def check_login_status(self):
@@ -252,7 +264,7 @@ class TwitterBrowser:
                                 wait_until="domcontentloaded", 
                                 timeout=15000)
             
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             
             # 1. USERNAME GİR
             username = os.environ.get('TWITTER_USERNAME') or os.environ.get('EMAIL_USER')
@@ -265,19 +277,25 @@ class TwitterBrowser:
                 'input[type="text"]'
             ]
             
+            username_entered = False
             for selector in username_selectors:
                 try:
                     await self.page.wait_for_selector(selector, timeout=5000)
                     await self.page.fill(selector, username)
                     self.logger.info("⚡ Username entered")
+                    username_entered = True
                     break
                 except:
                     continue
             
+            if not username_entered:
+                self.logger.error("❌ Could not enter username")
+                return False
+            
             # Enter tuşuna bas (Next butonu yerine)
             await self.page.keyboard.press('Enter')
             self.logger.info("⚡ Enter pressed")
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             
             # 2. USERNAME VERIFICATION (varsa)
             await self.handle_username_verification()
@@ -289,7 +307,7 @@ class TwitterBrowser:
             # Password alanını bekle ve direkt doldur
             try:
                 # Kısa timeout ile password alanını bekle
-                await self.page.wait_for_selector('input[type="password"]', timeout=8000)
+                await self.page.wait_for_selector('input[type="password"]', timeout=10000)
                 
                 # Direkt password'u yaz (click yapmadan)
                 await self.page.fill('input[type="password"]', password)
@@ -303,27 +321,27 @@ class TwitterBrowser:
                 self.logger.error(f"❌ Password field error: {e}")
                 return False
             
-            # Login sonrası kısa bekleme
-            await asyncio.sleep(3)
+            # Login sonrası bekleme
+            await asyncio.sleep(5)
             
             # 4. EMAIL VERIFICATION (varsa)
             await self.handle_email_verification()
             
-            # 5. LOGIN KONTROLÜ
-            if await self.quick_login_check():
-                self.logger.info("🎉 DIRECT LOGIN SUCCESSFUL!")
-                self.login_attempts = 0
-                return True
-            else:
-                # Bir kez daha dene
-                await asyncio.sleep(2)
+            # 5. LOGIN KONTROLÜ - DÜZELTME
+            self.logger.info("🔍 Checking login success...")
+            
+            # Birkaç kez dene
+            for attempt in range(3):
                 if await self.quick_login_check():
-                    self.logger.info("🎉 DIRECT LOGIN SUCCESSFUL (retry)!")
+                    self.logger.info("🎉 DIRECT LOGIN SUCCESSFUL!")
                     self.login_attempts = 0
                     return True
                 else:
-                    self.logger.error("❌ DIRECT LOGIN FAILED")
-                    return False
+                    self.logger.warning(f"⚠️ Login check failed, attempt {attempt + 1}/3")
+                    await asyncio.sleep(3)
+            
+            self.logger.error("❌ DIRECT LOGIN FAILED")
+            return False
                 
         except Exception as e:
             self.logger.error(f"❌ Direct login error: {e}")
@@ -345,7 +363,7 @@ class TwitterBrowser:
                     
                     # Enter tuşuna bas
                     await self.page.keyboard.press('Enter')
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
                     return True
             except:
                 pass
@@ -366,7 +384,7 @@ class TwitterBrowser:
             try:
                 verification_input = await self.page.wait_for_selector(
                     'input[data-testid="ocfEnterTextTextInput"]', 
-                    timeout=3000
+                    timeout=5000
                 )
             except:
                 self.logger.info("ℹ️ No email verification needed")
@@ -392,7 +410,7 @@ class TwitterBrowser:
                 await self.page.keyboard.press('Enter')
                 self.logger.info("✅ Verification code submitted")
             
-                await asyncio.sleep(3)
+                await asyncio.sleep(5)
                 return True
             else:
                 self.logger.error("❌ Could not get verification code from email")
@@ -441,8 +459,11 @@ class TwitterBrowser:
     
     async def post_thread(self, content):
         """THREAD OLARAK tweet gönder - DÜZELTME"""
-        if not self.is_logged_in:
+        # ÖNCE LOGIN KONTROLÜ YAP
+        if not await self.quick_login_check():
+            self.logger.error("❌ Not logged in, attempting login...")
             if not await self.login():
+                self.logger.error("❌ Login failed, cannot post thread")
                 return False
         
         try:
@@ -472,47 +493,8 @@ class TwitterBrowser:
             
             self.logger.info(f"🧵 Sending thread with {len(tweets)} tweets")
             
-            # Compose sayfasına git
-            # Compose sayfasına git - YENİ URL
-            # compose_urls = [
-            #     "https://x.com/compose/post",
-            #     "https://x.com/compose/tweet", 
-            #     "https://x.com/home"
-            # ]
-
-            # compose_success = False
-            # for url in compose_urls:
-            #     try:
-            #         await self.page.goto(url, timeout=30000)
-            #         await asyncio.sleep(4)
-                    
-            #         # Sayfa yüklendiğini kontrol et
-            #         if "compose" in self.page.url or "home" in self.page.url:
-            #             self.logger.info(f"✅ Successfully navigated to: {url}")
-            #             compose_success = True
-            #             break
-            #     except Exception as e:
-            #         self.logger.warning(f"⚠️ Failed to navigate to {url}: {e}")
-            #         continue
-
-            # if not compose_success:
-            #     self.logger.error("❌ Could not navigate to compose page")
-            #     return False
-
-            # # Tweet butonu varsa tıkla (home sayfasındaysak)
-            # if "home" in self.page.url:
-            #     try:
-            #         tweet_button = await self.page.wait_for_selector('a[data-testid="SideNav_NewTweet_Button"]', timeout=5000)
-            #         if tweet_button:
-            #             await tweet_button.click()
-            #             await asyncio.sleep(3)
-            #             self.logger.info("✅ Clicked tweet button from home")
-            #     except:
-            #         pass
-            # await asyncio.sleep(4)
-            
-            # Compose sayfasına git - YENİ YAKLAŞIM
-            self.logger.info("🏠 Going to home page first...")
+            # Home sayfasında olduğumuzdan emin ol
+            self.logger.info("🏠 Ensuring we're on home page...")
             await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(5)
 
