@@ -359,7 +359,7 @@ class TwitterBrowser:
         if not self.is_logged_in:
             if not await self.login():
                 return False
-
+    
         try:
             self.logger.info("📝 Posting tweet...")
         
@@ -374,8 +374,8 @@ class TwitterBrowser:
                 'div[data-testid="tweetTextarea_0"]',
                 'div[contenteditable="true"][data-testid="tweetTextarea_0"]',
                 'div[role="textbox"][data-testid="tweetTextarea_0"]',
-                'div[contenteditable="true"][role="textbox"]',
-                'div[contenteditable="true"]'
+                'div[contenteditable="true"]',
+                'div[role="textbox"]'
             ]
         
             compose_element = None
@@ -383,55 +383,30 @@ class TwitterBrowser:
                 try:
                     compose_element = await self.page.wait_for_selector(selector, timeout=5000)
                     if compose_element:
-                        # Element görünür ve etkileşimli mi kontrol et
-                        is_visible = await compose_element.is_visible()
-                        is_enabled = await compose_element.is_enabled()
-                        
-                        if is_visible and is_enabled:
-                            self.logger.info(f"✅ Found active compose area: {selector}")
-                            break
-                        else:
-                            self.logger.warning(f"⚠️ Compose area found but not active: {selector}")
-                            compose_element = None
+                        self.logger.info(f"✅ Found compose area with selector: {selector}")
+                        break
                 except:
                     continue
         
             if not compose_element:
-                self.logger.error("❌ Could not find active tweet compose area")
+                self.logger.error("❌ Could not find tweet compose area")
                 return False
         
-            # Tweet içeriğini yaz - DAHA GÜÇLÜ YAKLAŞIM
-            self.logger.info("📝 Entering tweet content...")
-        
-            # Önce alana odaklan
+            # Tweet içeriğini yaz
             await compose_element.click()
             await asyncio.sleep(1)
-        
-            # Mevcut içeriği temizle
-            await compose_element.evaluate('el => el.innerHTML = ""')
-            await asyncio.sleep(0.5)
-        
-            # İçeriği yavaş yavaş yaz (daha güvenilir)
-            await compose_element.type(content, delay=50)
+            await compose_element.fill(content)
             await asyncio.sleep(2)
         
-            # İçerik girildi mi kontrol et
-            entered_text = await compose_element.inner_text()
-            if len(entered_text.strip()) < 10:
-                self.logger.error("❌ Tweet content was not entered properly")
-                return False
+            self.logger.info(f"📝 Tweet content entered: {content[:50]}...")
         
-            self.logger.info(f"✅ Tweet content entered successfully: {entered_text[:50]}...")
-        
-        # Tweet gönder butonunu bul - DAHA KAPSAMLI
+            # Tweet gönder butonunu bul
             post_selectors = [
-                'div[data-testid="tweetButton"]:not([aria-disabled="true"])',
-                'button[data-testid="tweetButton"]:not([aria-disabled="true"])',
-                'div[data-testid="tweetButtonInline"]:not([aria-disabled="true"])',
-                'button[data-testid="tweetButtonInline"]:not([aria-disabled="true"])',
-                '[role="button"][data-testid="tweetButton"]:not([aria-disabled="true"])',
-                'div[aria-label*="Post"]:not([aria-disabled="true"])',
-                'button[aria-label*="Post"]:not([aria-disabled="true"])'
+                'div[data-testid="tweetButton"]',
+                'div[data-testid="tweetButtonInline"]',
+                'button[data-testid="tweetButton"]',
+                'button[data-testid="tweetButtonInline"]',
+                '[role="button"][data-testid="tweetButton"]'
             ]
         
             post_button = None
@@ -439,55 +414,35 @@ class TwitterBrowser:
                 try:
                     post_button = await self.page.wait_for_selector(selector, timeout=3000)
                     if post_button:
-                        # Butonun gerçekten tıklanabilir olduğunu kontrol et
-                        is_visible = await post_button.is_visible()
-                        is_enabled = await post_button.is_enabled()
-                        
-                        if is_visible and is_enabled:
-                            self.logger.info(f"✅ Found active post button: {selector}")
+                        # Butonun aktif olup olmadığını kontrol et
+                        is_disabled = await post_button.get_attribute('aria-disabled')
+                        if is_disabled != 'true':
+                            self.logger.info(f"✅ Found active post button with selector: {selector}")
                             break
                         else:
-                            self.logger.warning(f"⚠️ Post button found but not clickable: {selector}")
-                            post_button = None
+                            self.logger.warning(f"⚠️ Post button found but disabled: {selector}")
                 except:
                     continue
         
-            if post_button:
-                # Butona tıkla
-                self.logger.info("🚀 Clicking post button...")
-                await post_button.click()
-                await asyncio.sleep(3)
-            
-                # Tweet gönderildi mi kontrol et
-                try:
-                    # Compose modal kapandı mı kontrol et
-                    modal_closed = True
-                    try:
-                        await self.page.wait_for_selector('div[data-testid="tweetTextarea_0"]', timeout=2000)
-                        modal_closed = False
-                    except:
-                        modal_closed = True
-                    
-                    if modal_closed:
-                        self.logger.info("✅ Tweet posted successfully!")
-                        return True
-                    else:
-                        self.logger.warning("⚠️ Compose modal still open, trying keyboard shortcut...")
-                        await self.page.keyboard.press('Ctrl+Enter')
-                        await asyncio.sleep(3)
-                        self.logger.info("✅ Tweet posted with keyboard shortcut!")
-                        return True
-                        
-                except Exception as e:
-                    self.logger.warning(f"⚠️ Could not verify tweet posting: {e}")
-                    return True  # Assume success
-            else:
+            if not post_button:
+                self.logger.error("❌ Could not find active post button")
                 # Klavye kısayolu dene
-                self.logger.info("🔄 No post button found, trying keyboard shortcut...")
+                self.logger.info("🔄 Trying keyboard shortcut...")
                 await self.page.keyboard.press('Ctrl+Enter')
                 await asyncio.sleep(3)
-                self.logger.info("✅ Tweet posted with keyboard shortcut!")
+            else:
+                # Butona tıkla
+                await post_button.click()
+                await asyncio.sleep(3)
+        
+            # Tweet gönderildi mi kontrol et - URL değişimi veya success mesajı
+            current_url = self.page.url
+            if "compose" not in current_url.lower():
+                self.logger.info("✅ Tweet posted successfully!")
                 return True
+            else:
+                self.logger.error("❌ Tweet posting may have failed")
+                return False
         
         except Exception as e:
             self.logger.error(f"❌ Error posting tweet: {e}")
