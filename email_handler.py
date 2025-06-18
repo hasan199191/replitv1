@@ -9,7 +9,8 @@ from typing import Optional
 class EmailHandler:
     def __init__(self):
         self.email_user = "hasanacikgoz91@gmail.com"
-        self.email_pass = "Nuray1965+"  # Direkt şifre
+        # Gmail App Password kullan (normal şifre değil)
+        self.email_pass = os.environ.get('GMAIL_APP_PASSWORD') or os.environ.get('EMAIL_PASS') or "Nuray1965+"
         self.imap_server = "imap.gmail.com"
         self.imap_port = 993
         self.logger = logging.getLogger('EmailHandler')
@@ -24,15 +25,20 @@ class EmailHandler:
             self.logger.addHandler(handler)
     
     def get_twitter_verification_code(self, timeout=120) -> Optional[str]:
-        """Twitter'dan gelen doğrulama kodunu email'den al - GELİŞTİRİLMİŞ"""
+        """Twitter'dan gelen doğrulama kodunu email'den al - APP PASSWORD DESTEKLİ"""
         try:
-            # Environment variable'dan al, yoksa direkt şifreyi kullan
-            self.email_pass = os.environ.get('EMAIL_PASS') or "Nuray1965+"
-        
+            # Gmail App Password kontrolü
             if not self.email_pass:
-                self.logger.error("❌ No email password available!")
+                self.logger.error("❌ No Gmail password/app password available!")
                 return None
-    
+            
+            # App Password kullanıldığını belirt
+            if len(self.email_pass) == 16 and ' ' not in self.email_pass:
+                self.logger.info("🔐 Using Gmail App Password for authentication")
+            else:
+                self.logger.warning("⚠️ Using regular password - App Password recommended!")
+                self.logger.info("💡 Create App Password: https://support.google.com/accounts/answer/185833")
+
             self.logger.info("📧 Connecting to Gmail for verification code...")
         
             start_time = time.time()
@@ -41,7 +47,25 @@ class EmailHandler:
                 try:
                     # Gmail'e bağlan
                     mail = imaplib.IMAP4_SSL(self.imap_server, self.imap_port)
-                    mail.login(self.email_user, self.email_pass)
+                    
+                    # App Password ile login dene
+                    try:
+                        mail.login(self.email_user, self.email_pass)
+                        self.logger.info("✅ Successfully connected to Gmail")
+                    except imaplib.IMAP4.error as login_error:
+                        error_msg = str(login_error)
+                        if "Application-specific password required" in error_msg:
+                            self.logger.error("❌ Gmail App Password required!")
+                            self.logger.info("🔧 Setup instructions:")
+                            self.logger.info("1. Go to https://myaccount.google.com/security")
+                            self.logger.info("2. Enable 2-Step Verification")
+                            self.logger.info("3. Generate App Password for 'Mail'")
+                            self.logger.info("4. Set GMAIL_APP_PASSWORD environment variable")
+                            return None
+                        else:
+                            self.logger.error(f"❌ Gmail login failed: {error_msg}")
+                            return None
+                    
                     mail.select('inbox')
                 
                     # Son 15 dakikadaki Twitter emaillerini ara (daha geniş arama)
