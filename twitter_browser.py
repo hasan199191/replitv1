@@ -459,12 +459,14 @@ class TwitterBrowser:
     
     async def post_thread(self, content):
         """THREAD OLARAK tweet gönder - YENİDEN YAZILMIŞ"""
-        # ÖNCE LOGIN KONTROLÜ YAP
-        if not await self.quick_login_check():
-            self.logger.error("❌ Not logged in, attempting login...")
-            if not await self.login():
-                self.logger.error("❌ Login failed, cannot post thread")
-                return False
+        # Sadece login durumu bilinmiyorsa kontrol et
+        if not self.is_logged_in:
+            self.logger.info("🔍 Checking login status...")
+            if not await self.quick_login_check():
+                self.logger.error("❌ Not logged in, attempting login...")
+                if not await self.login():
+                    self.logger.error("❌ Login failed, cannot post thread")
+                    return False
     
         try:
             # İçeriği işle
@@ -937,8 +939,10 @@ class TwitterBrowser:
     async def reply_to_latest_tweet(self, username, reply_content):
         """Bir kullanıcının son tweetine yanıt ver"""
         if not self.is_logged_in:
-            if not await self.login():
-                return False
+            self.logger.info("🔍 Checking login status for reply...")
+            if not await self.quick_login_check():
+                if not await self.login():
+                    return False
 
         try:
             self.logger.info(f"💬 Fetching latest tweet for @{username}...")
