@@ -499,52 +499,25 @@ class TwitterBrowser:
             await asyncio.sleep(5)
 
             # Tweet butonuna tıkla
-            # Tweet butonuna tıkla - GENİŞLETİLMİŞ SELECTOR'LAR
-            self.logger.info("🔍 Looking for tweet button...")
-            tweet_button_selectors = [
-                'a[data-testid="SideNav_NewTweet_Button"]',  # Klasik selector
-                'div[data-testid="SideNav_NewTweet_Button"]',  # Div versiyonu
-                'button[data-testid="SideNav_NewTweet_Button"]',  # Button versiyonu
-                '[aria-label="Post"]',  # Post label
-                '[aria-label="Tweet"]',  # Tweet label
-                '[aria-label="Compose post"]',  # Compose post
-                '[data-testid="tweetButton"]',  # Tweet button
-                '[data-testid="tweetButtonInline"]',  # Inline tweet button
-                'a[href="/compose/tweet"]',  # Compose link
-                'a[href="/compose/post"]',  # Compose post link
-                'div[role="button"][aria-label*="Tweet"]',  # Role button with Tweet
-                'div[role="button"][aria-label*="Post"]',  # Role button with Post
-                'button[aria-label*="Tweet"]',  # Button with Tweet
-                'button[aria-label*="Post"]',  # Button with Post
-                '.r-1cvl2hr[role="button"]',  # CSS class based
-                '[data-testid*="tweet"]',  # Any testid containing tweet
-                '[data-testid*="post"]'   # Any testid containing post
-            ]
+            # Tweet butonuna tıkla yerine klavye kısayolu kullan
+            self.logger.info("⌨️ Using keyboard shortcut to open compose...")
+            await self.page.keyboard.press('n')  # Twitter'da 'n' tuşu compose modal açar
+            await asyncio.sleep(4)
 
-            tweet_button_found = False
-            for i, selector in enumerate(tweet_button_selectors):
-                try:
-                    self.logger.info(f"🔍 Trying tweet button selector {i+1}/{len(tweet_button_selectors)}: {selector}")
-                    tweet_button = await self.page.wait_for_selector(selector, timeout=3000)
-                    if tweet_button:
-                        # Element görünür mü kontrol et
-                        is_visible = await tweet_button.is_visible()
-                        if is_visible:
-                            self.logger.info(f"✅ Found visible tweet button: {selector}")
-                            await tweet_button.click()
-                            await asyncio.sleep(4)
-                            tweet_button_found = True
-                            break
-                        else:
-                            self.logger.warning(f"⚠️ Found but not visible: {selector}")
-                except Exception as e:
-                    self.logger.warning(f"⚠️ Selector failed {selector}: {e}")
-                    continue
+            # Eğer bu çalışmazsa Ctrl+N dene
+            try:
+                # Compose modal açıldı mı kontrol et
+                compose_check = await self.page.wait_for_selector('div[aria-label="Tweet text"]', timeout=3000)
+                if not compose_check:
+                    self.logger.info("⌨️ Trying Ctrl+N shortcut...")
+                    await self.page.keyboard.press('Control+n')
+                    await asyncio.sleep(4)
+            except:
+                self.logger.info("⌨️ Trying Ctrl+N shortcut...")
+                await self.page.keyboard.press('Control+n')
+                await asyncio.sleep(4)
 
-            if not tweet_button_found:
-                self.logger.error("❌ Could not find tweet button - running debug analysis...")
-                await self.debug_page_elements()
-                return False
+            self.logger.info("✅ Compose modal should be open via keyboard shortcut")
 
             self.logger.info("✅ Tweet compose modal should be open")
             
