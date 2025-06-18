@@ -458,25 +458,22 @@ class TwitterBrowser:
             return False
     
     async def post_thread(self, content):
-        """THREAD OLARAK tweet gönder - DÜZELTME"""
+        """THREAD OLARAK tweet gönder - YENİDEN YAZILMIŞ"""
         # ÖNCE LOGIN KONTROLÜ YAP
         if not await self.quick_login_check():
             self.logger.error("❌ Not logged in, attempting login...")
             if not await self.login():
                 self.logger.error("❌ Login failed, cannot post thread")
                 return False
-        
+    
         try:
             # İçeriği işle
             if isinstance(content, str):
-                # String ise akıllı bölme yap
                 tweets = self.smart_split_content(content, max_length=270)
             elif isinstance(content, list):
-                # Liste ise her elemanı kontrol et
                 tweets = []
                 for item in content:
                     if isinstance(item, str):
-                        # Uzun tweet'leri böl
                         if len(item) > 270:
                             split_tweets = self.smart_split_content(item, max_length=270)
                             tweets.extend(split_tweets)
@@ -486,167 +483,179 @@ class TwitterBrowser:
                         tweets.append(str(item))
             else:
                 tweets = [str(content)]
-            
+        
             if not tweets:
                 self.logger.error("❌ No valid tweets to send")
                 return False
-            
+        
             self.logger.info(f"🧵 Sending thread with {len(tweets)} tweets")
-            
-            # Home sayfasında olduğumuzdan emin ol
-            self.logger.info("🏠 Ensuring we're on home page...")
+        
+            # Home sayfasına git ve orada kal
+            self.logger.info("🏠 Going to home page...")
             await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(5)
-
-            # Direkt compose URL'sine git
-            self.logger.info("🔗 Going directly to compose URL...")
-            await self.page.goto("https://x.com/compose/post", wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(5)
-
-            # Eğer compose URL çalışmazsa alternatif dene
-            current_url = self.page.url
-            if "compose" not in current_url:
-                self.logger.info("🔗 Trying alternative compose URL...")
-                await self.page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(5)
-
-            # Hala çalışmıyorsa JavaScript ile modal aç
-            current_url = self.page.url
-            if "compose" not in current_url:
-                self.logger.info("🔧 Using JavaScript to open compose modal...")
-                await self.page.evaluate("""
-                    // Twitter'ın compose modal açma fonksiyonunu çağır
-                    const composeButton = document.querySelector('[data-testid="SideNav_NewTweet_Button"]') || 
-                                         document.querySelector('[aria-label="Post"]') ||
-                                         document.querySelector('[aria-label="Tweet"]');
-                    if (composeButton) {
-                        composeButton.click();
-                    } else {
-                        // Manuel olarak modal oluştur
-                        window.dispatchEvent(new KeyboardEvent('keydown', {key: 'n', code: 'KeyN'}));
-                    }
-                """)
-                await asyncio.sleep(5)
-
-            self.logger.info("✅ Compose should be open now")
-
-            self.logger.info("✅ Tweet compose modal should be open")
-            
-            # İlk tweet'i yaz
-            # İlk tweet'i yaz - GÜNCEL SELECTOR'LAR
-            first_tweet_selectors = [
-                'div[aria-label="Tweet text"]',  # Ana Twitter selector
-                'div[aria-label="Post text"]',   # Yeni Post text
-                'div[contenteditable="true"][aria-label*="What"]',  # "What's happening"
-                'div[contenteditable="true"][data-testid*="tweet"]',  # Tweet testid
-                'div[data-testid="tweetTextarea_0"]',  # Fallback
-                'div[contenteditable="true"][role="textbox"]',  # Role textbox
-                'div[contenteditable="true"]'  # Son fallback
+        
+            # Tweet butonu selectors - güncel Twitter arayüzü için
+            tweet_button_selectors = [
+                'a[data-testid="SideNav_NewTweet_Button"]',  # Sidebar tweet button
+                'div[data-testid="SideNav_NewTweet_Button"]',  # Alternative
+                'a[aria-label="Post"]',  # Post button
+                'button[aria-label="Post"]',  # Post button alternative
+                'a[href="/compose/tweet"]',  # Compose link
+                '[data-testid="tweetButtonInline"]'  # Inline tweet button
             ]
-            
-            first_tweet_area = None
-            for i, selector in enumerate(first_tweet_selectors):
+        
+            tweet_button = None
+            for selector in tweet_button_selectors:
                 try:
-                    self.logger.info(f"🔍 Trying selector {i+1}/{len(first_tweet_selectors)}: {selector}")
-                    first_tweet_area = await self.page.wait_for_selector(selector, timeout=5000)
-                    if first_tweet_area:
-                        # Element görünür mü kontrol et
-                        is_visible = await first_tweet_area.is_visible()
+                    self.logger.info(f"🔍 Looking for tweet button: {selector}")
+                    tweet_button = await self.page.wait_for_selector(selector, timeout=5000)
+                    if tweet_button:
+                        is_visible = await tweet_button.is_visible()
                         if is_visible:
-                            self.logger.info(f"✅ Found visible tweet area: {selector}")
+                            self.logger.info(f"✅ Found tweet button: {selector}")
                             break
                         else:
-                            self.logger.warning(f"⚠️ Found but not visible: {selector}")
-                            first_tweet_area = None
-                except Exception as e:
-                    self.logger.warning(f"⚠️ Selector failed {selector}: {e}")
+                            tweet_button = None
+                except:
                     continue
-
-            if not first_tweet_area:
-                # Debug: Sayfadaki tüm elementleri analiz et
-                self.logger.error("❌ Could not find tweet area. Running detailed analysis...")
-                await self.debug_page_elements()
+        
+            if not tweet_button:
+                self.logger.error("❌ Could not find tweet button")
                 return False
-            
+        
+            # Tweet butonuna tıkla
+            await tweet_button.click()
+            await asyncio.sleep(3)
+        
+            # Tweet yazma alanını bul - güncel selectors
+            compose_selectors = [
+                'div[data-testid="tweetTextarea_0"]',  # Ana textarea
+                'div[contenteditable="true"][aria-label*="What"]',  # What's happening
+                'div[contenteditable="true"][data-testid*="tweet"]',  # Tweet içeren
+                'div[contenteditable="true"][role="textbox"]',  # Textbox role
+                'div[contenteditable="true"]'  # Genel contenteditable
+            ]
+        
+            compose_area = None
+            for selector in compose_selectors:
+                try:
+                    self.logger.info(f"🔍 Looking for compose area: {selector}")
+                    compose_area = await self.page.wait_for_selector(selector, timeout=10000)
+                    if compose_area:
+                        is_visible = await compose_area.is_visible()
+                        if is_visible:
+                            self.logger.info(f"✅ Found compose area: {selector}")
+                            break
+                        else:
+                            compose_area = None
+                except:
+                    continue
+        
+            if not compose_area:
+                self.logger.error("❌ Could not find compose area")
+                return False
+        
             # İlk tweet'i yaz
-            await first_tweet_area.click()
+            await compose_area.click()
             await asyncio.sleep(1)
-            await first_tweet_area.fill(tweets[0])
+            await compose_area.fill(tweets[0])
             self.logger.info(f"✅ First tweet written: {tweets[0][:50]}...")
             await asyncio.sleep(2)
-            
-            # Diğer tweet'leri ekle
-            for i, tweet_text in enumerate(tweets[1:], start=2):
-                self.logger.info(f"➕ Adding tweet {i}/{len(tweets)}")
+        
+            # Eğer birden fazla tweet varsa thread oluştur
+            if len(tweets) > 1:
+                for i, tweet_text in enumerate(tweets[1:], start=2):
+                    self.logger.info(f"➕ Adding tweet {i}/{len(tweets)}")
                 
-                # "Add another Tweet" butonunu bul
-                add_button_selectors = [
-                    'div[aria-label="Add another Tweet"]',  # Doğru Twitter selector
-                    'div[aria-label="Add post"]',  # Fallback
-                    'div[data-testid="addButton"]',  # Fallback
-                    'button[aria-label="Add post"]'  # Fallback
-                ]
+                    # Thread butonunu bul ve tıkla
+                    thread_button_selectors = [
+                        'div[aria-label="Add another post"]',
+                        'div[aria-label="Add another Tweet"]',
+                        'button[aria-label="Add post"]',
+                        'div[data-testid="addButton"]'
+                    ]
                 
-                add_button = None
-                for selector in add_button_selectors:
-                    try:
-                        add_button = await self.page.wait_for_selector(selector, timeout=5000)
-                        if add_button:
-                            self.logger.info(f"✅ Found add button: {selector}")
-                            break
-                    except:
-                        continue
+                    thread_button = None
+                    for selector in thread_button_selectors:
+                        try:
+                            thread_button = await self.page.wait_for_selector(selector, timeout=5000)
+                            if thread_button:
+                                break
+                        except:
+                            continue
                 
-                if not add_button:
-                    self.logger.error(f"❌ Could not find add button for tweet {i}")
-                    return False
+                    if not thread_button:
+                        self.logger.warning(f"⚠️ Could not find thread button, posting single tweet")
+                        break
                 
-                # Add butonuna tıkla
-                await add_button.click()
-                await asyncio.sleep(3)
+                    await thread_button.click()
+                    await asyncio.sleep(3)
                 
-                # Yeni tweet alanını bul
-                tweet_areas = await self.page.query_selector_all('div[aria-label="Tweet text"]')
-                if len(tweet_areas) < i:
-                    self.logger.error(f"❌ Not enough tweet areas found for tweet {i}")
-                    return False
+                    # Yeni tweet alanını bul
+                    new_compose_selectors = [
+                        f'div[data-testid="tweetTextarea_{i-1}"]',
+                        'div[contenteditable="true"]:last-of-type'
+                    ]
                 
-                # Son tweet alanına yaz
-                last_area = tweet_areas[-1]
-                await last_area.click()
-                await asyncio.sleep(1)
-                await last_area.fill(tweet_text)
-                self.logger.info(f"✅ Tweet {i} written: {tweet_text[:50]}...")
-                await asyncio.sleep(2)
-            
-            # Thread'i gönder
+                    new_compose_area = None
+                    for selector in new_compose_selectors:
+                        try:
+                            new_compose_area = await self.page.wait_for_selector(selector, timeout=5000)
+                            if new_compose_area:
+                                break
+                        except:
+                            continue
+                
+                    if not new_compose_area:
+                        # Tüm compose alanlarını bul ve sonuncusunu kullan
+                        all_areas = await self.page.query_selector_all('div[contenteditable="true"]')
+                        if all_areas and len(all_areas) >= i:
+                            new_compose_area = all_areas[-1]
+                
+                    if new_compose_area:
+                        await new_compose_area.click()
+                        await asyncio.sleep(1)
+                        await new_compose_area.fill(tweet_text)
+                        self.logger.info(f"✅ Tweet {i} written: {tweet_text[:50]}...")
+                        await asyncio.sleep(2)
+                    else:
+                        self.logger.error(f"❌ Could not find compose area for tweet {i}")
+                        break
+        
+            # Tweet/Thread'i gönder
             post_button_selectors = [
-                'div[data-testid="tweetButton"]',  # Thread gönderme butonu
-                'div[data-testid="tweetButtonInline"]',  # Tekli tweet butonu
-                'button[data-testid="tweetButton"]'  # Fallback
+                'div[data-testid="tweetButton"]',
+                'button[data-testid="tweetButton"]',
+                'div[data-testid="tweetButtonInline"]',
+                'button[role="button"][aria-label*="Post"]'
             ]
-            
+        
             post_button = None
             for selector in post_button_selectors:
                 try:
                     post_button = await self.page.wait_for_selector(selector, timeout=5000)
                     if post_button:
-                        self.logger.info(f"✅ Found post button: {selector}")
-                        break
+                        is_enabled = await post_button.is_enabled()
+                        if is_enabled:
+                            self.logger.info(f"✅ Found enabled post button: {selector}")
+                            break
+                        else:
+                            post_button = None
                 except:
                     continue
-            
+        
             if not post_button:
-                self.logger.error("❌ Could not find post button")
+                self.logger.error("❌ Could not find enabled post button")
                 return False
-            
-            # Thread'i gönder
+        
+            # Gönder
             await post_button.click()
             await asyncio.sleep(5)
-            
+        
             self.logger.info("🎉 THREAD SUCCESSFULLY POSTED!")
             return True
-            
+        
         except Exception as e:
             self.logger.error(f"❌ Thread posting error: {e}")
             return False
@@ -721,131 +730,119 @@ class TwitterBrowser:
     
     async def get_latest_tweet(self, username):
         """Kullanıcının son tweet'ini al - GELİŞTİRİLMİŞ"""
-        if not self.is_logged_in:
+        if not await self.quick_login_check():
             if not await self.login():
                 return None
-    
+
         try:
             self.logger.info(f"🔍 Getting latest tweet for @{username}")
         
             # Kullanıcı profiline git
-            await self.page.goto(f"https://twitter.com/{username}", 
-                                wait_until="domcontentloaded", 
-                                timeout=15000)
-            await asyncio.sleep(4)
+            profile_url = f"https://x.com/{username}"
+            await self.page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
         
-            # Tweet'leri bul - birden fazla selector dene
+            # Sayfanın yüklendiğini kontrol et
+            current_url = self.page.url
+            if "login" in current_url or "flow" in current_url:
+                self.logger.error(f"❌ Redirected to login when accessing @{username}")
+                return None
+        
+            # Tweet'leri bul - daha kapsamlı selectors
             tweet_selectors = [
-                'article[data-testid="tweet"]',  # Ana tweet selector
-                'div[data-testid="cellInnerDiv"] article',  # İç article
-                'article[role="article"]',  # Role-based
-                '[data-testid="tweet"]'  # Basit fallback
+                'article[data-testid="tweet"]',
+                'div[data-testid="cellInnerDiv"] article',
+                'article[role="article"]',
+                '[data-testid="tweet"]',
+                'div[data-testid="tweet"]'
             ]
         
             first_tweet = None
             for selector in tweet_selectors:
                 try:
+                    await self.page.wait_for_selector(selector, timeout=10000)
                     tweets = await self.page.query_selector_all(selector)
                     if tweets:
+                        # İlk tweet'i al (en üstteki)
                         first_tweet = tweets[0]
-                        self.logger.info(f"✅ Found tweets with selector: {selector}")
+                        self.logger.info(f"✅ Found {len(tweets)} tweets with selector: {selector}")
                         break
                 except:
                     continue
         
-            if not first_tweet:
-                self.logger.warning(f"⚠️ No tweets found for @{username}")
-                return None
-        
-            # Tweet bilgilerini al
-            tweet_data = {}
-        
-            # Tweet metni
-            try:
-                text_selectors = [
-                    'div[data-testid="tweetText"]',  # Ana tweet text selector
-                    'div[lang] span',  # Text içeriği
-                    'span[lang]',  # Direkt span
-                    'div[dir="auto"]'  # Auto direction text
-                ]
-            
-                tweet_text = "No text"
-                for selector in text_selectors:
-                    try:
-                        text_element = await first_tweet.query_selector(selector)
-                        if text_element:
-                            tweet_text = await text_element.inner_text()
-                            break
-                    except:
-                        continue
-            
-                tweet_data['text'] = tweet_text
-            
-            except Exception as e:
-                self.logger.warning(f"⚠️ Could not get tweet text: {e}")
-                tweet_data['text'] = "No text"
-        
-            # Tweet zamanı
-            try:
-                time_selectors = [
-                    'time',
-                    'a[href*="/status/"] time',
-                    '[datetime]'
-                ]
-            
-                tweet_time = None
-                for selector in time_selectors:
-                    try:
-                        time_element = await first_tweet.query_selector(selector)
-                        if time_element:
-                            tweet_time = await time_element.get_attribute("datetime")
-                            break
-                    except:
-                        continue
-            
-                tweet_data['time'] = tweet_time
-            
-            except Exception as e:
-                self.logger.warning(f"⚠️ Could not get tweet time: {e}")
-                tweet_data['time'] = None
-        
-            # Tweet URL'i
-            try:
-                url_selectors = [
-                    'a[href*="/status/"]',
-                    'a[href*="/status/"][role="link"]'
-                ]
-            
-                tweet_url = None
-                for selector in url_selectors:
-                    try:
-                        link_element = await first_tweet.query_selector(selector)
-                        if link_element:
-                            tweet_url = await link_element.get_attribute("href")
-                            if tweet_url and not tweet_url.startswith("https://"):
-                                tweet_url = f"https://twitter.com{tweet_url}"
-                            break
-                    except:
-                        continue
-            
-                tweet_data['url'] = tweet_url
-            
-            except Exception as e:
-                self.logger.warning(f"⚠️ Could not get tweet URL: {e}")
-                tweet_data['url'] = None
-        
-            tweet_data['username'] = username
-        
-            self.logger.info(f"✅ Tweet data retrieved for @{username}")
-            self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
-            self.logger.info(f"🕐 Time: {tweet_data['time']}")
-            self.logger.info(f"🔗 URL: {tweet_data['url']}")
-        
-            return tweet_data
-        
-        except Exception as e:
-            self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
+        if not first_tweet:
+            self.logger.warning(f"⚠️ No tweets found for @{username}")
             return None
+        
+        # Tweet bilgilerini al
+        tweet_data = {'username': username}
+        
+        # Tweet metni - daha güvenilir extraction
+        try:
+            text_selectors = [
+                'div[data-testid="tweetText"]',
+                'div[lang] span',
+                'span[lang]',
+                'div[dir="auto"] span'
+            ]
+            
+            tweet_text = ""
+            for selector in text_selectors:
+                try:
+                    text_elements = await first_tweet.query_selector_all(selector)
+                    if text_elements:
+                        text_parts = []
+                        for elem in text_elements:
+                            text = await elem.inner_text()
+                            if text and text.strip():
+                                text_parts.append(text.strip())
+                        if text_parts:
+                            tweet_text = " ".join(text_parts)
+                            break
+                except:
+                    continue
+            
+            tweet_data['text'] = tweet_text if tweet_text else "No text found"
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Could not get tweet text: {e}")
+            tweet_data['text'] = "No text found"
+        
+        # Tweet zamanı
+        try:
+            time_element = await first_tweet.query_selector('time')
+            if time_element:
+                tweet_time = await time_element.get_attribute("datetime")
+                tweet_data['time'] = tweet_time
+            else:
+                tweet_data['time'] = None
+        except:
+            tweet_data['time'] = None
+        
+        # Tweet URL'i
+        try:
+            link_element = await first_tweet.query_selector('a[href*="/status/"]')
+            if link_element:
+                href = await link_element.get_attribute("href")
+                if href:
+                    if not href.startswith("https://"):
+                        href = f"https://x.com{href}"
+                    tweet_data['url'] = href
+                else:
+                    tweet_data['url'] = None
+            else:
+                tweet_data['url'] = None
+        except:
+            tweet_data['url'] = None
+        
+        self.logger.info(f"✅ Tweet data retrieved for @{username}")
+        self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
+        
+        return tweet_data
+        
+    except Exception as e:
+        self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
+        return None
     
     async def get_latest_tweet_id(self, username):
         """Bir kullanıcının son tweet ID'sini al - GELİŞTİRİLMİŞ"""
