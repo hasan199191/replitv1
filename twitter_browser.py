@@ -498,37 +498,22 @@ class TwitterBrowser:
             await asyncio.sleep(5)
         
             # Tweet butonu selectors - güncel Twitter arayüzü için
-            tweet_button_selectors = [
-                'a[data-testid="SideNav_NewTweet_Button"]',  # Sidebar tweet button
-                'div[data-testid="SideNav_NewTweet_Button"]',  # Alternative
-                'a[aria-label="Post"]',  # Post button
-                'button[aria-label="Post"]',  # Post button alternative
-                'a[href="/compose/tweet"]',  # Compose link
-                '[data-testid="tweetButtonInline"]'  # Inline tweet button
-            ]
-        
-            tweet_button = None
-            for selector in tweet_button_selectors:
-                try:
-                    self.logger.info(f"🔍 Looking for tweet button: {selector}")
-                    tweet_button = await self.page.wait_for_selector(selector, timeout=5000)
-                    if tweet_button:
-                        is_visible = await tweet_button.is_visible()
-                        if is_visible:
-                            self.logger.info(f"✅ Found tweet button: {selector}")
-                            break
-                        else:
-                            tweet_button = None
-                except:
-                    continue
-        
-            if not tweet_button:
-                self.logger.error("❌ Could not find tweet button")
+            
+            # Debug: Analyze page elements if we can't find tweet button
+            self.logger.info("🔍 Analyzing page for tweet buttons...")
+            await self.debug_page_elements()
+            
+            # Replace the existing tweet button finding code with:
+            tweet_button = await self.find_tweet_button_advanced()
+            if not tweet_button and tweet_button is not True:
+                self.logger.error("❌ Could not find tweet button with advanced search")
                 return False
-        
-            # Tweet butonuna tıkla
-            await tweet_button.click()
-            await asyncio.sleep(3)
+
+            # If we got True, we're on compose page, skip button click
+            if tweet_button is not True:
+                # Tweet butonuna tıkla
+                await tweet_button.click()
+                await asyncio.sleep(3)
         
             # Tweet yazma alanını bul - güncel selectors
             compose_selectors = [
@@ -661,6 +646,84 @@ class TwitterBrowser:
         except Exception as e:
             self.logger.error(f"❌ Thread posting error: {e}")
             return False
+    
+    async def find_tweet_button_advanced(self):
+        """Gelişmiş tweet butonu bulma - birden fazla yöntem"""
+        try:
+            self.logger.info("🔍 Advanced tweet button search...")
+            
+            # Yöntem 1: Standart selectors
+            standard_selectors = [
+                'a[data-testid="SideNav_NewTweet_Button"]',
+                'div[data-testid="SideNav_NewTweet_Button"]',
+                'button[data-testid="SideNav_NewTweet_Button"]',
+                'a[aria-label="Post"]',
+                'button[aria-label="Post"]'
+            ]
+            
+            for selector in standard_selectors:
+                try:
+                    element = await self.page.wait_for_selector(selector, timeout=3000)
+                    if element and await element.is_visible():
+                        self.logger.info(f"✅ Found tweet button with: {selector}")
+                        return element
+            except:
+                continue
+            
+            # Yöntem 2: Text içeriği ile arama
+            self.logger.info("🔍 Searching by text content...")
+            try:
+                # "Post" veya "Tweet" yazısı olan elementler
+                elements = await self.page.query_selector_all('a, button, div[role="button"]')
+                for element in elements:
+                    try:
+                        text = await element.inner_text()
+                        if text and text.strip().lower() in ['post', 'tweet', 'gönder']:
+                            if await element.is_visible():
+                                self.logger.info(f"✅ Found tweet button by text: {text}")
+                                return element
+                    except:
+                        continue
+            except Exception as e:
+                self.logger.warning(f"⚠️ Text search failed: {e}")
+            
+            # Yöntem 3: Sidebar navigation arama
+            self.logger.info("🔍 Searching in sidebar navigation...")
+            try:
+                nav_elements = await self.page.query_selector_all('nav a, nav button, nav div[role="button"]')
+                for element in nav_elements:
+                    try:
+                        aria_label = await element.get_attribute('aria-label') or ''
+                        if 'post' in aria_label.lower() or 'tweet' in aria_label.lower():
+                            if await element.is_visible():
+                                self.logger.info(f"✅ Found tweet button in nav: {aria_label}")
+                                return element
+                    except:
+                        continue
+            except Exception as e:
+                self.logger.warning(f"⚠️ Nav search failed: {e}")
+            
+            # Yöntem 4: Compose URL'sine direkt gitme
+            self.logger.info("🔍 Trying direct compose URL...")
+            try:
+                await self.page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(3)
+                
+                # Compose sayfasında mıyız?
+                current_url = self.page.url
+                if "compose" in current_url:
+                    self.logger.info("✅ Successfully navigated to compose page")
+                    return True  # Compose sayfasındayız, button'a gerek yok
+                
+            except Exception as e:
+                self.logger.warning(f"⚠️ Direct compose failed: {e}")
+            
+            self.logger.error("❌ Could not find tweet button with any method")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"❌ Advanced tweet button search failed: {e}")
+            return None
     
     async def reply_to_tweet(self, tweet_url, reply_content):
         """Tweet'e yanıt ver"""
