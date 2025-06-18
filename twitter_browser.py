@@ -770,79 +770,79 @@ class TwitterBrowser:
                 except:
                     continue
         
-        if not first_tweet:
-            self.logger.warning(f"⚠️ No tweets found for @{username}")
-            return None
+            if not first_tweet:
+                self.logger.warning(f"⚠️ No tweets found for @{username}")
+                return None
         
-        # Tweet bilgilerini al
-        tweet_data = {'username': username}
+            # Tweet bilgilerini al
+            tweet_data = {'username': username}
         
-        # Tweet metni - daha güvenilir extraction
-        try:
-            text_selectors = [
-                'div[data-testid="tweetText"]',
-                'div[lang] span',
-                'span[lang]',
-                'div[dir="auto"] span'
-            ]
+            # Tweet metni - daha güvenilir extraction
+            try:
+                text_selectors = [
+                    'div[data-testid="tweetText"]',
+                    'div[lang] span',
+                    'span[lang]',
+                    'div[dir="auto"] span'
+                ]
             
-            tweet_text = ""
-            for selector in text_selectors:
-                try:
-                    text_elements = await first_tweet.query_selector_all(selector)
-                    if text_elements:
-                        text_parts = []
-                        for elem in text_elements:
-                            text = await elem.inner_text()
-                            if text and text.strip():
-                                text_parts.append(text.strip())
-                        if text_parts:
-                            tweet_text = " ".join(text_parts)
-                            break
-                except:
-                    continue
+                tweet_text = ""
+                for selector in text_selectors:
+                    try:
+                        text_elements = await first_tweet.query_selector_all(selector)
+                        if text_elements:
+                            text_parts = []
+                            for elem in text_elements:
+                                text = await elem.inner_text()
+                                if text and text.strip():
+                                    text_parts.append(text.strip())
+                            if text_parts:
+                                tweet_text = " ".join(text_parts)
+                                break
+                    except:
+                        continue
             
-            tweet_data['text'] = tweet_text if tweet_text else "No text found"
+                tweet_data['text'] = tweet_text if tweet_text else "No text found"
             
-        except Exception as e:
-            self.logger.warning(f"⚠️ Could not get tweet text: {e}")
-            tweet_data['text'] = "No text found"
+            except Exception as e:
+                self.logger.warning(f"⚠️ Could not get tweet text: {e}")
+                tweet_data['text'] = "No text found"
         
-        # Tweet zamanı
-        try:
-            time_element = await first_tweet.query_selector('time')
-            if time_element:
-                tweet_time = await time_element.get_attribute("datetime")
-                tweet_data['time'] = tweet_time
-            else:
+            # Tweet zamanı
+            try:
+                time_element = await first_tweet.query_selector('time')
+                if time_element:
+                    tweet_time = await time_element.get_attribute("datetime")
+                    tweet_data['time'] = tweet_time
+                else:
+                    tweet_data['time'] = None
+            except:
                 tweet_data['time'] = None
-        except:
-            tweet_data['time'] = None
         
-        # Tweet URL'i
-        try:
-            link_element = await first_tweet.query_selector('a[href*="/status/"]')
-            if link_element:
-                href = await link_element.get_attribute("href")
-                if href:
-                    if not href.startswith("https://"):
-                        href = f"https://x.com{href}"
-                    tweet_data['url'] = href
+            # Tweet URL'i
+            try:
+                link_element = await first_tweet.query_selector('a[href*="/status/"]')
+                if link_element:
+                    href = await link_element.get_attribute("href")
+                    if href:
+                        if not href.startswith("https://"):
+                            href = f"https://x.com{href}"
+                        tweet_data['url'] = href
+                    else:
+                        tweet_data['url'] = None
                 else:
                     tweet_data['url'] = None
-            else:
+            except:
                 tweet_data['url'] = None
-        except:
-            tweet_data['url'] = None
         
-        self.logger.info(f"✅ Tweet data retrieved for @{username}")
-        self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
+            self.logger.info(f"✅ Tweet data retrieved for @{username}")
+            self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
         
-        return tweet_data
+            return tweet_data
         
-    except Exception as e:
-        self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
-        return None
+        except Exception as e:
+            self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
+            return None
     
     async def get_latest_tweet_id(self, username):
         """Bir kullanıcının son tweet ID'sini al - GELİŞTİRİLMİŞ"""
