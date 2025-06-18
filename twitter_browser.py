@@ -514,14 +514,10 @@ class TwitterBrowser:
             # İlk tweet'i yaz
             # İlk tweet'i yaz - GÜNCEL SELECTOR'LAR
             first_tweet_selectors = [
-                'div[data-testid="tweetTextarea_0"]',
-                'div[contenteditable="true"][data-testid="tweetTextarea_0"]',
-                'div[contenteditable="true"][aria-label*="Post"]',
-                'div[contenteditable="true"][aria-label*="What"]',
-                'div[role="textbox"][contenteditable="true"]',
-                'div[data-testid="dmComposerTextInput"]',
-                '.public-DraftEditor-content',
-                'div[aria-label="Post text"]'
+                'div[aria-label="Tweet text"]',  # Ana Twitter selector
+                'div[data-testid="tweetTextarea_0"]',  # Fallback
+                'div[contenteditable="true"][aria-label*="Tweet"]',  # Fallback
+                'div[role="textbox"][contenteditable="true"]'  # Fallback
             ]
             
             first_tweet_area = None
@@ -575,10 +571,10 @@ class TwitterBrowser:
                 
                 # "Add another Tweet" butonunu bul
                 add_button_selectors = [
-                    'div[aria-label="Add post"]',
-                    'div[data-testid="addButton"]',
-                    'button[aria-label="Add post"]',
-                    'div[aria-label="Add another Tweet"]'
+                    'div[aria-label="Add another Tweet"]',  # Doğru Twitter selector
+                    'div[aria-label="Add post"]',  # Fallback
+                    'div[data-testid="addButton"]',  # Fallback
+                    'button[aria-label="Add post"]'  # Fallback
                 ]
                 
                 add_button = None
@@ -600,7 +596,7 @@ class TwitterBrowser:
                 await asyncio.sleep(3)
                 
                 # Yeni tweet alanını bul
-                tweet_areas = await self.page.query_selector_all('div[data-testid^="tweetTextarea"]')
+                tweet_areas = await self.page.query_selector_all('div[aria-label="Tweet text"]')
                 if len(tweet_areas) < i:
                     self.logger.error(f"❌ Not enough tweet areas found for tweet {i}")
                     return False
@@ -615,9 +611,9 @@ class TwitterBrowser:
             
             # Thread'i gönder
             post_button_selectors = [
-                'div[data-testid="tweetButton"]',
-                'button[data-testid="tweetButton"]',
-                'div[data-testid="tweetButtonInline"]'
+                'div[data-testid="tweetButton"]',  # Thread gönderme butonu
+                'div[data-testid="tweetButtonInline"]',  # Tekli tweet butonu
+                'button[data-testid="tweetButton"]'  # Fallback
             ]
             
             post_button = None
@@ -730,10 +726,10 @@ class TwitterBrowser:
         
             # Tweet'leri bul - birden fazla selector dene
             tweet_selectors = [
-                'article[data-testid="tweet"]',
-                'div[data-testid="tweet"]',
-                'article[role="article"]',
-                'div[data-testid="cellInnerDiv"]'
+                'article[data-testid="tweet"]',  # Ana tweet selector
+                'div[data-testid="cellInnerDiv"] article',  # İç article
+                'article[role="article"]',  # Role-based
+                '[data-testid="tweet"]'  # Basit fallback
             ]
         
             first_tweet = None
@@ -757,9 +753,10 @@ class TwitterBrowser:
             # Tweet metni
             try:
                 text_selectors = [
-                    'div[data-testid="tweetText"]',
-                    'div[lang]',
-                    'span[lang]'
+                    'div[data-testid="tweetText"]',  # Ana tweet text selector
+                    'div[lang] span',  # Text içeriği
+                    'span[lang]',  # Direkt span
+                    'div[dir="auto"]'  # Auto direction text
                 ]
             
                 tweet_text = "No text"
