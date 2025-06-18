@@ -3,6 +3,7 @@ import random
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -30,32 +31,33 @@ class AdvancedContentGenerator:
         """Initialize Gemini AI with Flash 2.0"""
         try:
             self.api_key = os.environ.get('GEMINI_API_KEY')
-        
+            
             if not self.api_key:
                 raise Exception("Gemini API key not found")
-        
+            
             genai.configure(api_key=self.api_key)
-        
+            
             # Gemini Flash 2.0 modelini kullan (ücretsiz)
             self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        
+            
             self.load_data()
-        
+            
             logging.info("Advanced Gemini Flash 2.0 and data lists successfully initialized")
             return True
-        
+            
         except Exception as e:
             logging.error(f"Error initializing Gemini Flash 2.0: {e}")
-            # Fallback olarak başka modelleri dene
+            # Fallback olarak başka modeller dene
             try:
                 logging.info("Trying fallback models...")
-            
+                
+                # Diğer ücretsiz modelleri dene
                 fallback_models = [
                     'gemini-1.5-flash',
                     'gemini-1.5-flash-latest',
                     'gemini-flash'
                 ]
-            
+                
                 for model_name in fallback_models:
                     try:
                         self.model = genai.GenerativeModel(model_name)
@@ -68,16 +70,12 @@ class AdvancedContentGenerator:
                     except Exception as model_error:
                         logging.warning(f"Model {model_name} failed: {model_error}")
                         continue
-            
-                # Son çare olarak sync versiyonu dene
-                self.model = genai.GenerativeModel('gemini-1.5-flash')
-                self.load_data()
-                logging.info("Initialized with basic Gemini model")
-                return True
+                
+                raise Exception("All Gemini models failed")
                 
             except Exception as fallback_error:
-                logging.error(f"All Gemini models failed: {fallback_error}")
-                return False
+                logging.error(f"Fallback models also failed: {fallback_error}")
+                raise
     
     def load_data(self):
         """Load project and account lists"""
@@ -118,17 +116,17 @@ class AdvancedContentGenerator:
             {"name": "Union", "twitter": "@union_build", "website": "union.build", "category": "Cross-Chain Infrastructure"},
             {"name": "YEET", "twitter": "@yeet", "website": "yeet.com", "category": "Meme + Utility"}
         ]
-        
+
         # Monitored accounts
         self.monitored_accounts = [
-            "0x_ultra", "0xBreadguy", "beast_ico", "mdudas", "lex_node", 
-            "jessepollak", "0xWenMoon", "ThinkingUSD", "udiWertheimer", 
-            "vohvohh", "NTmoney", "0xMert_", "QwQiao", "DefiIgnas", 
+            "0x_ultra", "0xBreadguy", "beast_ico", "mdudas", "lex_node",
+            "jessepollak", "0xWenMoon", "ThinkingUSD", "udiWertheimer",
+            "vohvohh", "NTmoney", "0xMert_", "QwQiao", "DefiIgnas",
             "notthreadguy", "Chilearmy123", "Punk9277", "DeeZe", "stevenyuntcap",
             "chefcryptoz", "ViktorBunin", "ayyyeandy", "andy8052", "Phineas_Sol",
-            "MoonOverlord", "NarwhalTan", "theunipcs", "RyanWatkins_", 
-            "aixbt_agent", "ai_9684xtpa", "icebergy_", "Luyaoyuan1", 
-            "stacy_muur", "TheOneandOmsy", "jeffthedunker", "JoshuaDeuk", 
+            "MoonOverlord", "NarwhalTan", "theunipcs", "RyanWatkins_",
+            "aixbt_agent", "ai_9684xtpa", "icebergy_", "Luyaoyuan1",
+            "stacy_muur", "TheOneandOmsy", "jeffthedunker", "JoshuaDeuk",
             "0x_scientist", "inversebrah", "dachshundwizard", "gammichan",
             "sandeepnailwal", "segall_max", "blknoiz06", "0xmons", "hosseeb",
             "GwartyGwart", "JasonYanowitz", "Tyler_Did_It", "laurashin",
@@ -165,35 +163,89 @@ class AdvancedContentGenerator:
             return self.monitored_accounts
         return random.sample(self.monitored_accounts, count)
     
-    async def generate_project_content(self, project: Dict) -> Optional[str]:
-        """Generate analytical content for a project - RETURNS STRING"""
+    def split_into_thread(self, content: str) -> List[str]:
+        """Split content into tweet-sized chunks for a thread"""
+        if not content:
+            return []
+            
+        # Maximum tweet length
+        MAX_LENGTH = 275  # Leave room for ellipsis when needed
+        
+        # If content fits in one tweet, return it
+        if len(content) <= MAX_LENGTH:
+            return [content]
+            
+        # Split into sentences first
+        sentences = [s.strip() for s in content.split('.') if s.strip()]
+        threads = []
+        current_tweet = ""
+        
+        for sentence in sentences:
+            # If adding this sentence exceeds tweet limit
+            if len(current_tweet) + len(sentence) + 2 > MAX_LENGTH:
+                if current_tweet:
+                    threads.append(current_tweet.strip())
+                current_tweet = sentence + ". "
+            else:
+                current_tweet += sentence + ". "
+        
+        if current_tweet:
+            threads.append(current_tweet.strip())
+            
+        # Add thread numbering if more than one tweet
+        if len(threads) > 1:
+            for i in range(len(threads)):
+                threads[i] = f"{i+1}/{len(threads)} {threads[i]}"
+                
+            # Ensure no tweet exceeds limit after adding numbers
+            for i in range(len(threads)):
+                if len(threads[i]) > 280:
+                    threads[i] = threads[i][:277] + "..."
+                    
+        return threads
+
+    async def generate_project_content(self, project: Dict) -> Optional[List[str]]:
+        """Generate analytical content for a project"""
         try:
             current_date = datetime.now().strftime("%B %d, %Y")
             market_context = random.choice(self.market_contexts)
             
             prompt = f"""
-You are a Web3 analyst creating a Twitter post. CRITICAL: Maximum 250 characters total.
-
-Project: {project['name']} ({project['twitter']})
-Category: {project.get('category', 'Web3 Project')}
-
-STRICT RULES:
-- MAXIMUM 250 characters (including spaces, hashtags, handles)
-- MUST include the project's Twitter handle {project['twitter']}
-- Write in English only
-- No prefixes like "Tweet 1:" or numbering
-- Be analytical and insightful
-- Use 1-2 hashtags maximum
-- Focus on ONE key insight about the project
-- RETURN ONLY THE TWEET TEXT AS A SINGLE STRING
-
-Format: Direct insight + project handle + 1-2 hashtags
-
-Example good format:
-"[Insight about project] {project['twitter']} [brief technical detail] #DeFi #Web3"
-
-Write the tweet now (under 250 characters):
-"""
+            You are a respected Web3 analyst with 5+ years in crypto markets. You're known for insightful takes that cut through the noise.
+            
+            Project Analysis:
+            - Name: {project['name']}
+            - Category: {project.get('category', 'Web3 Project')}
+            - Twitter: {project['twitter']}
+            - Current market context: {market_context}
+            - Date: {current_date}
+            
+            Your task: Write 2-3 connected tweets that demonstrate your analytical depth. Structure your response as a thread with each tweet on a new line. Do NOT format as JSON or array.
+            
+            Think like a researcher who has studied:
+            - Technical architecture and innovation
+            - Market positioning vs competitors  
+            - Ecosystem fit and partnerships
+            - Token economics (if applicable)
+            - Team background and execution track record
+            
+            Writing style guidelines:
+            - Each complete thought should be under 270 characters
+            - Start with a strong hook in the first tweet
+            - Use specific technical or market terminology naturally
+            - Reference broader Web3 trends or comparisons
+            - Include forward-looking perspective in final tweet
+            - Add 1-2 relevant hashtags at the end
+            - Avoid hype words: "revolutionary", "game-changing", "moon"
+            - Use analytical language: "worth noting", "interesting development"
+            
+            Format example:
+            1. First tweet text here...
+            2. Second tweet text here...
+            3. Final tweet text with hashtags...
+            
+            Respond with just the tweets, no additional formatting or JSON.
+            """
             
             response = self.model.generate_content(prompt)
             
@@ -203,19 +255,39 @@ Write the tweet now (under 250 characters):
                 if content.startswith('"') and content.endswith('"'):
                     content = content[1:-1]
                 
-                # Remove "Tweet X:" prefixes
-                import re
-                content = re.sub(r'^Tweet \d+:\s*', '', content)
-                content = re.sub(r'\s*Tweet \d+:\s*', ' ', content)
+                # Split into lines and clean up
+                lines = [line.strip() for line in content.split('\n') if line.strip()]
                 
-                # STRICT character limit check
-                if len(content) > 270:
-                    content = content[:267] + "..."
-                    logging.warning(f"Content truncated to fit character limit: {len(content)} chars")
+                # Remove any JSON formatting
+                cleaned_lines = []
+                for line in lines:
+                    # Remove JSON/array formatting
+                    line = line.strip('[]"\'')
+                    # Remove numeric prefixes like "1.", "2.", etc.
+                    line = re.sub(r'^\d+\.\s*', '', line)
+                    if line:
+                        cleaned_lines.append(line)
                 
-                logging.info(f"Advanced content generated for: {project['name']}")
-                logging.info(f"Content ({len(content)} chars): {content}")
-                return content
+                # Ensure each tweet fits the character limit
+                final_tweets = []
+                for tweet in cleaned_lines:
+                    if len(tweet) > 280:
+                        tweet = tweet[:277] + "..."
+                    final_tweets.append(tweet)
+                
+                # Add thread numbering
+                if len(final_tweets) > 1:
+                    for i in range(len(final_tweets)):
+                        final_tweets[i] = f"{i+1}/{len(final_tweets)} {final_tweets[i]}"
+                        if len(final_tweets[i]) > 280:
+                            final_tweets[i] = final_tweets[i][:277] + "..."
+                
+                if final_tweets:
+                    logging.info(f"Generated thread with {len(final_tweets)} tweets for: {project['name']}")
+                    return final_tweets
+                else:
+                    logging.error(f"Failed to create valid thread for: {project['name']}")
+                    return None
             else:
                 logging.error(f"Failed to generate content for: {project['name']}")
                 return None
@@ -363,3 +435,43 @@ Write the tweet now (under 250 characters):
         except Exception as e:
             logging.error(f"Error generating market insight: {e}")
             return None
+    
+    def split_content_by_sentences(self, content, char_limit=250):
+        """İçeriği cümle bazında böl"""
+        try:
+            # Single paragraph
+            content = content.replace('\n', ' ').strip()
+            
+            # Split by sentences
+            import re
+            sentences = re.split(r'(?<=[.!?])\s+', content)
+            
+            tweets = []
+            current_tweet = ""
+            
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+                    
+                # Can we add this sentence?
+                test_tweet = current_tweet + (" " if current_tweet else "") + sentence
+                
+                if len(test_tweet) <= char_limit:
+                    current_tweet = test_tweet
+                else:
+                    # Save current tweet
+                    if current_tweet:
+                        tweets.append(current_tweet.strip())
+                    # Start new tweet
+                    current_tweet = sentence
+            
+            # Add last tweet
+            if current_tweet:
+                tweets.append(current_tweet.strip())
+            
+            return tweets
+            
+        except Exception as e:
+            logging.error(f"Error splitting content: {e}")
+            return [content[:char_limit]]
