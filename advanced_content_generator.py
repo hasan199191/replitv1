@@ -30,33 +30,32 @@ class AdvancedContentGenerator:
         """Initialize Gemini AI with Flash 2.0"""
         try:
             self.api_key = os.environ.get('GEMINI_API_KEY')
-            
+        
             if not self.api_key:
                 raise Exception("Gemini API key not found")
-            
+        
             genai.configure(api_key=self.api_key)
-            
+        
             # Gemini Flash 2.0 modelini kullan (ücretsiz)
             self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
-            
+        
             self.load_data()
-            
+        
             logging.info("Advanced Gemini Flash 2.0 and data lists successfully initialized")
             return True
-            
+        
         except Exception as e:
             logging.error(f"Error initializing Gemini Flash 2.0: {e}")
-            # Fallback olarak başka modeller dene
+            # Fallback olarak başka modelleri dene
             try:
                 logging.info("Trying fallback models...")
-                
-                # Diğer ücretsiz modelleri dene
+            
                 fallback_models = [
                     'gemini-1.5-flash',
                     'gemini-1.5-flash-latest',
                     'gemini-flash'
                 ]
-                
+            
                 for model_name in fallback_models:
                     try:
                         self.model = genai.GenerativeModel(model_name)
@@ -69,12 +68,16 @@ class AdvancedContentGenerator:
                     except Exception as model_error:
                         logging.warning(f"Model {model_name} failed: {model_error}")
                         continue
-                
-                raise Exception("All Gemini models failed")
-                
-            except Exception as fallback_error:
-                logging.error(f"Fallback models also failed: {fallback_error}")
-                raise
+            
+            # Son çare olarak sync versiyonu dene
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
+            self.load_data()
+            logging.info("Initialized with basic Gemini model")
+            return True
+            
+        except Exception as fallback_error:
+            logging.error(f"All Gemini models failed: {fallback_error}")
+            return False
     
     def load_data(self):
         """Load project and account lists"""
@@ -169,39 +172,27 @@ class AdvancedContentGenerator:
             market_context = random.choice(self.market_contexts)
             
             prompt = f"""
-            You are a respected Web3 analyst with 5+ years in crypto markets. You're known for insightful takes that cut through the noise.
-            
-            Project Analysis:
-            - Name: {project['name']}
-            - Category: {project.get('category', 'Web3 Project')}
-            - Twitter: {project['twitter']}
-            - Current market context: {market_context}
-            - Date: {current_date}
-            
-            Your task: Write a Twitter post that demonstrates your analytical depth. Think like a researcher who has studied this project's:
-            - Technical architecture and innovation
-            - Market positioning vs competitors  
-            - Ecosystem fit and partnerships
-            - Token economics (if applicable)
-            - Team background and execution track record
-            
-            Writing style guidelines:
-            - Lead with a unique insight or contrarian take
-            - Use specific technical or market terminology naturally
-            - Reference broader Web3 trends or comparisons
-            - Include a forward-looking perspective
-            - Add 1-2 hashtags that feel organic, not forced
-            - Avoid hype words: "revolutionary", "game-changing", "moon"
-            - Use analytical language: "worth noting", "interesting development", "key differentiator"
-            
-            Examples of good opening phrases:
-            - "What's interesting about [project] is..."
-            - "While everyone's focused on X, [project] is quietly building Y..."
-            - "The [category] space is crowded, but [project]'s approach to Z stands out..."
-            - "Been diving into [project]'s architecture and..."
-            
-            Maximum 280 characters. Write as if you're sharing genuine alpha with your followers.
-            """
+You are a Web3 analyst creating a Twitter post. CRITICAL: Maximum 250 characters total.
+
+Project: {project['name']} ({project['twitter']})
+Category: {project.get('category', 'Web3 Project')}
+
+STRICT RULES:
+- MAXIMUM 250 characters (including spaces, hashtags, handles)
+- MUST include the project's Twitter handle {project['twitter']}
+- Write in English only
+- No prefixes like "Tweet 1:" or numbering
+- Be analytical and insightful
+- Use 1-2 hashtags maximum
+- Focus on ONE key insight about the project
+
+Format: Direct insight + project handle + 1-2 hashtags
+
+Example good format:
+"[Insight about project] {project['twitter']} [brief technical detail] #DeFi #Web3"
+
+Write the tweet now (under 250 characters):
+"""
             
             response = self.model.generate_content(prompt)
             
@@ -211,10 +202,17 @@ class AdvancedContentGenerator:
                 if content.startswith('"') and content.endswith('"'):
                     content = content[1:-1]
                 
-                if len(content) > 280:
-                    content = content[:277] + "..."
+                # Remove "Tweet X:" prefixes
+                import re
+                content = re.sub(r'^Tweet \d+:\s*', '', content)
+                content = re.sub(r'\s*Tweet \d+:\s*', ' ', content)
                 
-                logging.info(f"Advanced content generated for: {project['name']}")
+                # STRICT character limit check
+                if len(content) > 270:
+                    content = content[:267] + "..."
+                    logging.warning(f"Content truncated to fit character limit: {len(content)} chars")
+                
+                logging.info(f"Content generated ({len(content)} chars): {content}")
                 return content
             else:
                 logging.error(f"Failed to generate content for: {project['name']}")
