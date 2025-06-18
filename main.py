@@ -39,7 +39,7 @@ logging.basicConfig(
 class TwitterBot:
     def __init__(self):
         self.initialization_attempts = 0
-        self.max_init_attempts = 3
+        self.max_init_attempts = 2  # Azaltıldı
         self.bot_start_time = datetime.now()
         self.content_generator = AdvancedContentGenerator()
         self.email_handler = EmailHandler()
@@ -113,38 +113,6 @@ class TwitterBot:
         logging.info(f"Data loaded: {len(self.projects)} projects, {len(self.monitored_accounts)} accounts")
         return True
         
-    async def restart_browser_if_needed(self):
-        """Restart browser if it's having issues"""
-        try:
-            if self.browser:
-                # Test if browser is responsive
-                try:
-                    await self.browser.page.evaluate('1 + 1')
-                    return True
-                except Exception as e:
-                    if "crashed" in str(e).lower() or "closed" in str(e).lower():
-                        logging.warning("🔄 Browser issues detected, restarting...")
-                        
-                        # Close current browser
-                        try:
-                            await self.browser.close()
-                        except:
-                            pass
-                        
-                        # Reinitialize browser
-                        self.browser = TwitterBrowser()
-                        if await self.browser.initialize():
-                            if await self.browser.login():
-                                logging.info("✅ Browser restarted successfully")
-                                return True
-                        
-                        logging.error("❌ Browser restart failed")
-                        return False
-            return True
-        except Exception as e:
-            logging.error(f"❌ Error in browser restart: {e}")
-            return False
-        
     async def initialize(self):
         self.initialization_attempts += 1
         logging.info(f"🤖 Initializing Twitter Bot (Attempt {self.initialization_attempts}/{self.max_init_attempts})...")
@@ -179,7 +147,7 @@ class TwitterBot:
         return True
         
     async def post_web3_projects(self):
-        """2 rastgele Web3 projesi hakkında tweet gönder"""
+        """2 rastgele Web3 projesi hakkında tweet gönder - OPTIMIZE EDİLDİ"""
         try:
             logging.info("🚀 Selecting and posting Web3 project content...")
         
@@ -198,45 +166,18 @@ class TwitterBot:
                     content = await self.content_generator.generate_project_content(project)
                 
                     if content:
-                        # İçerik 280 karakterden uzunsa thread olarak gönder
-                        if len(content) > 280:
-                            # İçeriği parçalara böl
-                            content_parts = []
-                            words = content.split()
-                            current_part = ""
-                        
-                            for word in words:
-                                if len(current_part + " " + word) <= 275:  # 5 karakter margin
-                                    current_part += " " + word if current_part else word
-                                else:
-                                    if current_part:
-                                        content_parts.append(current_part)
-                                    current_part = word
-                        
-                            if current_part:
-                                content_parts.append(current_part)
-                        
-                            logging.info(f"📝 Content split into {len(content_parts)} parts")
-                        
-                            # Thread olarak gönder
-                            if await self.browser.post_tweet_thread(content_parts):
-                                logging.info(f"✅ Successfully posted thread for {project['name']}")
-                                success_count += 1
-                            else:
-                                logging.error(f"❌ Failed to post thread for {project['name']}")
+                        # Tweet gönder
+                        if await self.browser.post_tweet(content):
+                            logging.info(f"✅ Successfully posted content for {project['name']}")
+                            success_count += 1
                         else:
-                            # Tek tweet olarak gönder
-                            if await self.browser.post_tweet(content):
-                                logging.info(f"✅ Successfully posted content for {project['name']}")
-                                success_count += 1
-                            else:
-                                logging.error(f"❌ Failed to post content for {project['name']}")
+                            logging.error(f"❌ Failed to post content for {project['name']}")
                     else:
                         logging.error(f"❌ Failed to generate content for {project['name']}")
                 
-                    # Projeler arası bekleme
+                    # Projeler arası bekleme - azaltıldı
                     if i < len(selected_projects) - 1:
-                        wait_time = random.uniform(30, 60)
+                        wait_time = random.uniform(15, 30)  # Azaltıldı
                         logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next project...")
                         await asyncio.sleep(wait_time)
                     
@@ -252,7 +193,7 @@ class TwitterBot:
             return False
             
     async def reply_to_monitored_accounts(self):
-        """Takip edilen hesapların tweetlerine cevap ver"""
+        """Takip edilen hesapların tweetlerine cevap ver - OPTIMIZE EDİLDİ"""
         try:
             logging.info("💬 Starting reply task for monitored accounts...")
         
@@ -266,8 +207,8 @@ class TwitterBot:
                 try:
                     logging.info(f"🔍 Processing @{account}...")
                 
-                    # Son tweetleri al (son 1 saat içindeki)
-                    recent_tweets = await self.browser.get_user_recent_tweets(account, limit=3)
+                    # Son tweetleri al (son 2 saat içindeki)
+                    recent_tweets = await self.browser.get_user_recent_tweets(account, limit=2)  # Azaltıldı
                 
                     if recent_tweets:
                         # En son tweet'e cevap ver
@@ -288,8 +229,8 @@ class TwitterBot:
                     else:
                         logging.warning(f"⚠️ No recent tweets found for @{account}")
                 
-                    # Hesaplar arası bekleme
-                    wait_time = random.uniform(15, 30)
+                    # Hesaplar arası bekleme - azaltıldı
+                    wait_time = random.uniform(10, 20)  # Azaltıldı
                     logging.info(f"⏳ Waiting {wait_time:.1f} seconds before next account...")
                     await asyncio.sleep(wait_time)
                     
@@ -305,22 +246,17 @@ class TwitterBot:
             return False
             
     async def run_complete_workflow(self):
-        """Tam workflow'u çalıştır"""
+        """Tam workflow'u çalıştır - OPTIMIZE EDİLDİ"""
         try:
             logging.info("🔄 Starting COMPLETE workflow...")
             logging.info(f"🕐 Workflow start time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
-            # Login kontrolü
-            if not await self.browser.check_login_status():
+            # Login kontrolü - basitleştirildi
+            if not self.browser.is_logged_in:
                 logging.info("🔐 Login required, attempting to login...")
                 if not await self.browser.login():
                     logging.error("❌ Login failed, skipping workflow")
                     return False
-            
-            # Browser health check
-            if not await self.restart_browser_if_needed():
-                logging.error("❌ Browser restart failed, skipping workflow")
-                return False
             
             workflow_success = True
             
@@ -330,9 +266,9 @@ class TwitterBot:
             if not task1_success:
                 workflow_success = False
             
-            # Görevler arası bekleme
-            logging.info("⏳ Waiting 2 minutes between tasks...")
-            await asyncio.sleep(120)
+            # Görevler arası bekleme - azaltıldı
+            logging.info("⏳ Waiting 1 minute between tasks...")
+            await asyncio.sleep(60)  # Azaltıldı
             
             # TASK 2: Monitored accounts'lara cevap ver
             logging.info("📋 TASK 2: Replying to monitored accounts...")
