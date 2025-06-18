@@ -12,6 +12,8 @@ from playwright.async_api import async_playwright
 import imaplib
 import email
 from advanced_content_generator import AdvancedContentGenerator
+from health_server import start_health_server
+import threading
 
 # Windows konsol kodlama sorununu çöz
 if sys.platform == "win32":
@@ -132,14 +134,19 @@ class TwitterBrowser:
         self.playwright = None
         self.context = None
         self.page = None
-        self.user_data_dir = "pw_profile"
+        self.user_data_dir = "/tmp/playwright_data"  # Render için /tmp kullan
 
     async def initialize(self):
         try:
+            # Klasörü oluştur
+            os.makedirs(self.user_data_dir, exist_ok=True)
+            
             self.playwright = await async_playwright().start()
             self.context = await self.playwright.chromium.launch_persistent_context(
                 user_data_dir=self.user_data_dir,
                 headless=True,  # Render için True
+                viewport={'width': 1366, 'height': 768},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 args=[
                     '--no-sandbox',
                     '--disable-dev-shm-usage',
@@ -157,7 +164,9 @@ class TwitterBrowser:
                     '--disable-blink-features=AutomationControlled',
                     '--disable-automation',
                     '--disable-infobars',
-                    '--start-maximized'
+                    '--start-maximized',
+                    '--disable-features=TranslateUI',
+                    '--disable-ipc-flooding-protection'
                 ]
             )
             
@@ -178,6 +187,11 @@ class TwitterBrowser:
                 Object.defineProperty(navigator, 'languages', {
                     get: () => ['en-US', 'en'],
                 });
+                Object.defineProperty(navigator, 'permissions', {
+                    get: () => ({
+                        query: () => Promise.resolve({ state: 'granted' })
+                    })
+                });
             """)
             
             if self.context.pages:
@@ -185,7 +199,10 @@ class TwitterBrowser:
             else:
                 self.page = await self.context.new_page()
                 
-            await self.page.goto("https://x.com/home", wait_until="networkidle")
+            # Sayfa yükleme timeout'unu artır
+            self.page.set_default_timeout(60000)
+            
+            await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(5)
             logging.info("✅ Chrome initialized with persistent profile!")
             return True
@@ -232,7 +249,7 @@ class TwitterBrowser:
             logging.info('⚡ Quick login check...')
             for _ in range(2):  # 2 kez dene
                 try:
-                    await self.page.goto('https://x.com/home', wait_until='networkidle', timeout=20000)
+                    await self.page.goto('https://x.com/home', wait_until='domcontentloaded', timeout=30000)
                     await asyncio.sleep(4)
                     break
                 except Exception as e:
@@ -270,52 +287,54 @@ class TwitterBrowser:
             return False
             
     async def manual_verification_input(self, page):
-        """Manuel doğrulama kodu girişi"""
+        """Manuel doğrulama kodu girişi - Render için otomatik geç"""
         try:
-            print("\n" + "="*60)
-            print("🔐 EMAIL DOĞRULAMA KODU GEREKİYOR")
-            print("="*60)
-            print(f"📧 Gmail hesabınızı kontrol edin: {self.email_handler.email}")
-            print("🔍 'X (Twitter)' veya 'verify@twitter.com' dan gelen emaili bulun")
-            print("📝 6-8 haneli doğrulama kodunu kopyalayın")
-            print("="*60)
+            logging.info("🔐 EMAIL DOĞRULAMA KODU GEREKİYOR")
+            logging.info(f"📧 Gmail hesabı kontrol ediliyor: {self.email_handler.email}")
             
-            verification_code = input("📧 Doğrulama kodunu girin: ").strip()
-            
-            if verification_code:
-                logging.info(f"✅ Kod giriliyor: {verification_code}")
+            # Render'da manuel giriş yapamayız, otomatik email kontrolü yap
+            if self.email_handler and self.email_handler.email and self.email_handler.password:
+                logging.info("🔄 Gmail'den otomatik kod alınıyor...")
                 
-                selectors = [
-                    'input[data-testid="ocfEnterTextTextInput"]',
-                    'input[name="text"]',
-                    'input[type="text"]',
-                    'input[placeholder*="code"]'
-                ]
+                code = await self.email_handler.get_verification_code(timeout=120)
                 
-                for selector in selectors:
-                    try:
-                        code_input = page.locator(selector)
-                        if await code_input.count() > 0:
-                            await code_input.fill(verification_code)
-                            await asyncio.sleep(1)
-                            await page.keyboard.press('Enter')
-                            await asyncio.sleep(3)
+                if code:
+                    logging.info(f'✅ Gmail\'den kod alındı: {code}')
+                    
+                    selectors = [
+                        'input[data-testid="ocfEnterTextTextInput"]',
+                        'input[name="text"]',
+                        'input[type="text"]',
+                        'input[placeholder*="code"]'
+                    ]
+                    
+                    for selector in selectors:
+                        try:
+                            code_input = page.locator(selector)
+                            if await code_input.count() > 0:
+                                await code_input.fill(str(code))
+                                await asyncio.sleep(1)
+                                await page.keyboard.press('Enter')
+                                await asyncio.sleep(3)
+                                
+                                if await self.check_login_success(page):
+                                    logging.info("✅ Otomatik doğrulama başarılı!")
+                                    return True
+                                break
+                        except:
+                            continue
                             
-                            if await self.check_login_success(page):
-                                logging.info("✅ Manuel doğrulama başarılı!")
-                                return True
-                            break
-                    except:
-                        continue
-                        
-                logging.error("❌ Doğrulama kodu girişi başarısız")
-                return False
+                    logging.error("❌ Doğrulama kodu girişi başarısız")
+                    return False
+                else:
+                    logging.error("❌ Gmail'den kod alınamadı")
+                    return False
             else:
-                logging.error("❌ Doğrulama kodu girilmedi")
+                logging.error("❌ Gmail bilgileri eksik!")
                 return False
                 
         except Exception as e:
-            logging.error(f"❌ Manuel doğrulama hatası: {e}")
+            logging.error(f"❌ Otomatik doğrulama hatası: {e}")
             return False
             
     async def direct_login(self):
@@ -323,36 +342,101 @@ class TwitterBrowser:
             page = self.page
             logging.info('⚡ Starting login to X.com...')
             
-            await page.goto('https://x.com/i/flow/login', wait_until='networkidle')
+            # Login sayfasına git
+            await page.goto('https://x.com/i/flow/login', wait_until='domcontentloaded', timeout=60000)
             await asyncio.sleep(5)
+            
+            # Sayfanın tam yüklenmesini bekle
+            try:
+                await page.wait_for_selector('input', timeout=15000)
+                logging.info("✅ Login sayfası yüklendi")
+            except:
+                logging.error("❌ Login sayfası yüklenemedi")
+                return False
             
             await asyncio.sleep(random.uniform(2, 4))
             
-            # Username gir
+            # Username gir - GELİŞTİRİLMİŞ SELECTOR'LAR
             username_selectors = [
                 'input[autocomplete="username"]',
                 'input[name="text"]',
-                'input[data-testid="ocfEnterTextTextInput"]'
+                'input[data-testid="ocfEnterTextTextInput"]',
+                'input[type="text"]',
+                'input[placeholder*="username"]',
+                'input[placeholder*="email"]',
+                'input[placeholder*="phone"]'
             ]
             
             username_entered = False
-            for selector in username_selectors:
+            for i, selector in enumerate(username_selectors):
                 try:
-                    username_input = page.locator(selector)
-                    if await username_input.count() > 0:
-                        await username_input.click()
-                        await asyncio.sleep(1)
-                        await username_input.fill(self.username)
-                        logging.info(f'⚡ Username entered: {self.username}')
-                        await asyncio.sleep(1)
-                        await page.keyboard.press('Enter')
-                        username_entered = True
-                        break
-                except:
+                    logging.info(f"🔍 Username selector {i+1}/{len(username_selectors)}: {selector}")
+                    
+                    # Element'i bekle
+                    username_input = await page.wait_for_selector(selector, timeout=8000)
+                    if username_input:
+                        # Element görünür mü kontrol et
+                        is_visible = await username_input.is_visible()
+                        if is_visible:
+                            logging.info(f"✅ Username alanı bulundu ve görünür: {selector}")
+                            
+                            # Alana tıkla
+                            await username_input.click()
+                            await asyncio.sleep(1)
+                            
+                            # Alanı temizle
+                            await username_input.fill('')
+                            await asyncio.sleep(0.5)
+                            
+                            # Username'i yaz
+                            await username_input.type(self.username, delay=100)
+                            logging.info(f'⚡ Username entered: {self.username}')
+                            await asyncio.sleep(2)
+                            
+                            # Enter tuşuna bas
+                            await page.keyboard.press('Enter')
+                            username_entered = True
+                            break
+                        else:
+                            logging.warning(f"⚠️ Element bulundu ama görünür değil: {selector}")
+                    
+                except Exception as e:
+                    logging.warning(f"⚠️ Selector {selector} başarısız: {e}")
                     continue
                     
             if not username_entered:
-                logging.error("❌ Could not enter username")
+                logging.error("❌ Could not enter username - trying alternative method")
+                
+                # Alternatif yöntem: Tüm input'ları bul
+                try:
+                    inputs = await page.query_selector_all('input')
+                    logging.info(f"🔍 Toplam {len(inputs)} input bulundu")
+                    
+                    for i, input_elem in enumerate(inputs):
+                        try:
+                            is_visible = await input_elem.is_visible()
+                            input_type = await input_elem.get_attribute('type')
+                            placeholder = await input_elem.get_attribute('placeholder')
+                            
+                            logging.info(f"Input {i}: visible={is_visible}, type={input_type}, placeholder={placeholder}")
+                            
+                            if is_visible and input_type != 'hidden':
+                                await input_elem.click()
+                                await asyncio.sleep(1)
+                                await input_elem.fill(self.username)
+                                await asyncio.sleep(1)
+                                await page.keyboard.press('Enter')
+                                username_entered = True
+                                logging.info(f"✅ Username entered via alternative method")
+                                break
+                        except:
+                            continue
+                            
+                except Exception as e:
+                    logging.error(f"❌ Alternative method failed: {e}")
+                    
+            if not username_entered:
+                logging.error("❌ Could not enter username with any method")
                 return False
                 
             await asyncio.sleep(5)
@@ -367,17 +451,20 @@ class TwitterBrowser:
             password_entered = False
             for selector in password_selectors:
                 try:
-                    password_input = page.locator(selector)
-                    if await password_input.count() > 0:
-                        await password_input.click()
-                        await asyncio.sleep(1)
-                        await password_input.fill(self.password)
-                        logging.info('⚡ Password entered')
-                        await asyncio.sleep(1)
-                        await page.keyboard.press('Enter')
-                        password_entered = True
-                        break
-                except:
+                    password_input = await page.wait_for_selector(selector, timeout=10000)
+                    if password_input:
+                        is_visible = await password_input.is_visible()
+                        if is_visible:
+                            await password_input.click()
+                            await asyncio.sleep(1)
+                            await password_input.fill(self.password)
+                            logging.info('⚡ Password entered')
+                            await asyncio.sleep(1)
+                            await page.keyboard.press('Enter')
+                            password_entered = True
+                            break
+                except Exception as e:
+                    logging.warning(f"Password selector {selector} failed: {e}")
                     continue
                     
             if not password_entered:
@@ -405,45 +492,8 @@ class TwitterBrowser:
                 pass
             
             if email_verification_required:
-                logging.info('📧 Email doğrulama gerekiyor - otomatik kod alınıyor...')
-                
-                logging.info(f"📧 Email Handler durumu:")
-                logging.info(f"   - Email: {self.email_handler.email}")
-                logging.info(f"   - Password: {'✅ Set' if self.email_handler.password else '❌ Not set'}")
-                logging.info(f"   - Password length: {len(self.email_handler.password) if self.email_handler.password else 0}")
-                
-                if self.email_handler and self.email_handler.email and self.email_handler.password:
-                    logging.info("🔄 Gmail'den kod alınıyor...")
-                    
-                    code = await self.email_handler.get_verification_code(timeout=90)
-                    
-                    if code:
-                        logging.info(f'✅ Gmail\'den kod alındı: {code}')
-                        
-                        try:
-                            code_input = page.locator('input[data-testid="ocfEnterTextTextInput"]')
-                            await code_input.fill(str(code))
-                            await asyncio.sleep(1)
-                            await page.keyboard.press('Enter')
-                            await asyncio.sleep(3)
-                            
-                            if await self.check_login_success(page):
-                                logging.info('✅ Otomatik email doğrulama ile giriş başarılı!')
-                                return True
-                            else:
-                                logging.warning("⚠️ Kod girildi ama giriş başarısız, manuel deneniyor...")
-                                return await self.manual_verification_input(page)
-                                
-                        except Exception as e:
-                            logging.error(f"❌ Kod girme hatası: {e}")
-                            return await self.manual_verification_input(page)
-                            
-                    else:
-                        logging.warning("❌ Gmail'den kod alınamadı, manuel girişe geçiliyor...")
-                        return await self.manual_verification_input(page)
-                else:
-                    logging.error("❌ Gmail bilgileri eksik!")
-                    return await self.manual_verification_input(page)
+                logging.info('📧 Email doğrulama gerekiyor - otomatik işlem başlatılıyor...')
+                return await self.manual_verification_input(page)
             
             return await self.check_login_success(page)
             
@@ -897,6 +947,13 @@ class TwitterBrowser:
 async def main():
     logging.info("🚀 Bot başlatılıyor...")
     print("🚀 Bot başlatılıyor...")
+
+    # Health server'ı başlat (Render için gerekli)
+    try:
+        health_server = start_health_server()
+        logging.info("✅ Health server başlatıldı")
+    except Exception as e:
+        logging.error(f"❌ Health server başlatılamadı: {e}")
 
     # Environment variables debug
     logging.info("🔍 Environment variables check:")
