@@ -205,7 +205,7 @@ class AdvancedContentGenerator:
         return threads
 
     async def generate_project_content(self, project: Dict) -> Optional[List[str]]:
-        """Generate analytical content for a project - RETURNS LIST FOR THREAD"""
+        """Generate analytical content for a project"""
         try:
             current_date = datetime.now().strftime("%B %d, %Y")
             market_context = random.choice(self.market_contexts)
@@ -220,29 +220,37 @@ class AdvancedContentGenerator:
             - Current market context: {market_context}
             - Date: {current_date}
             
-            Create a 2-3 tweet thread about this project. Each tweet should be under 270 characters.
+            Your task: Write 2-3 connected tweets that demonstrate your analytical depth. Structure your response as a thread with each tweet on a new line. Do NOT format as JSON or array.
             
-            Structure:
-            1. First tweet: Hook + key insight about the project
-            2. Second tweet: Technical analysis or market positioning
-            3. Third tweet (if needed): Forward-looking perspective + hashtags
+            Think like a researcher who has studied:
+            - Technical architecture and innovation
+            - Market positioning vs competitors  
+            - Ecosystem fit and partnerships
+            - Token economics (if applicable)
+            - Team background and execution track record
             
-            Writing style:
-            - Analytical, not hype
-            - Use specific terminology
-            - Reference broader Web3 trends
-            - Include 1-2 relevant hashtags only in the last tweet
-            - Avoid words like "revolutionary", "game-changing"
-            - Use phrases like "worth noting", "interesting development"
+            Writing style guidelines:
+            - Each complete thought should be under 270 characters
+            - Start with a strong hook in the first tweet
+            - Use specific technical or market terminology naturally
+            - Reference broader Web3 trends or comparisons
+            - Include forward-looking perspective in final tweet
+            - Add 1-2 relevant hashtags at the end
+            - Avoid hype words: "revolutionary", "game-changing", "moon"
+            - Use analytical language: "worth noting", "interesting development"
             
-            Return ONLY the tweet texts, one per line, no numbering or formatting.
+            Format example:
+            1. First tweet text here...
+            2. Second tweet text here...
+            3. Final tweet text with hashtags...
+            
+            Respond with just the tweets, no additional formatting or JSON.
             """
             
             response = self.model.generate_content(prompt)
             
             if response.text:
                 content = response.text.strip()
-                
                 # Clean up formatting
                 if content.startswith('"') and content.endswith('"'):
                     content = content[1:-1]
@@ -250,32 +258,32 @@ class AdvancedContentGenerator:
                 # Split into lines and clean up
                 lines = [line.strip() for line in content.split('\n') if line.strip()]
                 
-                # Remove any JSON formatting or numbering
+                # Remove any JSON formatting
                 cleaned_lines = []
                 for line in lines:
                     # Remove JSON/array formatting
                     line = line.strip('[]"\'')
                     # Remove numeric prefixes like "1.", "2.", etc.
                     line = re.sub(r'^\d+\.\s*', '', line)
-                    # Remove "Tweet X:" prefixes
-                    line = re.sub(r'^Tweet\s*\d+:\s*', '', line, flags=re.IGNORECASE)
-                    if line and len(line) > 10:  # Minimum meaningful content
+                    if line:
                         cleaned_lines.append(line)
                 
-                # Ensure each tweet fits character limit
+                # Ensure each tweet fits the character limit
                 final_tweets = []
                 for tweet in cleaned_lines:
                     if len(tweet) > 280:
                         tweet = tweet[:277] + "..."
                     final_tweets.append(tweet)
                 
-                # Limit to maximum 3 tweets
-                final_tweets = final_tweets[:3]
+                # Add thread numbering
+                if len(final_tweets) > 1:
+                    for i in range(len(final_tweets)):
+                        final_tweets[i] = f"{i+1}/{len(final_tweets)} {final_tweets[i]}"
+                        if len(final_tweets[i]) > 280:
+                            final_tweets[i] = final_tweets[i][:277] + "..."
                 
                 if final_tweets:
                     logging.info(f"Generated thread with {len(final_tweets)} tweets for: {project['name']}")
-                    for i, tweet in enumerate(final_tweets):
-                        logging.info(f"Tweet {i+1}: {tweet}")
                     return final_tweets
                 else:
                     logging.error(f"Failed to create valid thread for: {project['name']}")
@@ -289,7 +297,7 @@ class AdvancedContentGenerator:
             return None
     
     async def generate_reply(self, tweet_data: Dict) -> Optional[str]:
-        """Generate analytical reply to a tweet - RETURNS STRING"""
+        """Generate analytical reply to a tweet"""
         try:
             tweet_text = tweet_data.get('text', '')
             username = tweet_data.get('username', '')
@@ -304,49 +312,56 @@ class AdvancedContentGenerator:
             tweet_category = self.categorize_tweet(tweet_text, found_keywords)
             
             prompt = f"""
-            You are a seasoned Web3 researcher engaging in a Twitter discussion. You're known for thoughtful, analytical responses.
+            You are a seasoned Web3 researcher engaging in a Twitter discussion. You're known for thoughtful, analytical responses that add genuine value.
             
             Tweet Context:
-            - Author: @{username}
+            - Author: @{username} (crypto/Web3 influencer)
             - Content: "{tweet_text}"
             - Detected topics: {', '.join(found_keywords) if found_keywords else 'General Web3/crypto'}
             - Category: {tweet_category}
             
-            Create a valuable reply that:
-            - Provides unique insight or perspective
-            - References specific protocols/metrics when relevant
-            - Uses technical terminology naturally
-            - Avoids generic responses
-            - Is genuinely helpful to the conversation
+            Your expertise areas:
+            - DeFi protocols and yield strategies
+            - Layer 1/Layer 2 scaling solutions  
+            - NFT market dynamics and utility
+            - Cross-chain infrastructure
+            - Tokenomics and governance
+            - Market analysis and trends
             
-            Maximum 270 characters. Return ONLY the reply text, no quotes or formatting.
+            Response guidelines:
+            - Provide a unique perspective or insight
+            - Reference specific protocols, metrics, or trends when relevant
+            - Ask a thoughtful follow-up question if appropriate
+            - Share a contrarian view if you disagree (respectfully)
+            - Use technical terminology naturally
+            - Avoid generic responses like "great point" or "thanks for sharing"
+            - Don't be promotional or salesy
+            
+            Response types to consider:
+            - Technical clarification or additional context
+            - Market data or trend observation  
+            - Comparison to similar projects/situations
+            - Historical precedent or pattern recognition
+            - Risk assessment or consideration
+            - Implementation challenge or opportunity
+            
+            Maximum 280 characters. Respond as if you're genuinely interested in advancing the conversation.
             """
             
             response = self.model.generate_content(prompt)
             
             if response.text:
                 reply = response.text.strip()
-                
-                # Clean formatting
                 if reply.startswith('"') and reply.endswith('"'):
                     reply = reply[1:-1]
                 
-                # Remove any prefixes
-                reply = re.sub(r'^Reply:\s*', '', reply, flags=re.IGNORECASE)
-                reply = re.sub(r'^Response:\s*', '', reply, flags=re.IGNORECASE)
-                
-                # Ensure character limit
                 if len(reply) > 280:
                     reply = reply[:277] + "..."
                 
-                if len(reply) > 10:  # Minimum meaningful content
-                    logging.info(f"Generated reply for @{username}: {reply}")
-                    return reply
-                else:
-                    logging.error(f"Reply too short for @{username}")
-                    return None
+                logging.info(f"Advanced reply generated for: @{username}")
+                return reply
             else:
-                logging.error(f"Failed to generate reply for @{username}")
+                logging.error(f"Failed to generate reply for: @{username}")
                 return None
                 
         except Exception as e:
