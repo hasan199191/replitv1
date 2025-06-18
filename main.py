@@ -38,9 +38,20 @@ logging.basicConfig(
 
 class EmailHandler:
     def __init__(self):
-        self.email = os.getenv('EMAIL_ADDRESS')
-        self.password = os.getenv('EMAIL_PASSWORD')
+        # Environment variable isimlerini düzelt
+        self.email = os.getenv('EMAIL_ADDRESS') or os.getenv('EMAIL_USER')
+        self.password = os.getenv('EMAIL_PASSWORD') or os.getenv('GMAIL_APP_PASSWORD') or os.getenv('EMAIL_PASS')
+        
+        # Debug için environment variables'ları logla
+        logging.info(f"📧 Environment variables check:")
+        logging.info(f"   EMAIL_ADDRESS: {'✅ Set' if os.getenv('EMAIL_ADDRESS') else '❌ Not set'}")
+        logging.info(f"   EMAIL_USER: {'✅ Set' if os.getenv('EMAIL_USER') else '❌ Not set'}")
+        logging.info(f"   EMAIL_PASSWORD: {'✅ Set' if os.getenv('EMAIL_PASSWORD') else '❌ Not set'}")
+        logging.info(f"   GMAIL_APP_PASSWORD: {'✅ Set' if os.getenv('GMAIL_APP_PASSWORD') else '❌ Not set'}")
+        logging.info(f"   EMAIL_PASS: {'✅ Set' if os.getenv('EMAIL_PASS') else '❌ Not set'}")
+        
         logging.info(f"📧 Email Handler initialized for: {self.email}")
+        logging.info(f"📧 Password status: {'✅ Set' if self.password else '❌ Not set'}")
         
     async def get_verification_code(self, timeout=120):
         """Gmail'den X.com doğrulama kodunu al"""
@@ -887,22 +898,35 @@ async def main():
     logging.info("🚀 Bot başlatılıyor...")
     print("🚀 Bot başlatılıyor...")
 
+    # Environment variables debug
+    logging.info("🔍 Environment variables check:")
+    env_vars = ['TWITTER_USERNAME', 'TWITTER_PASSWORD', 'EMAIL_ADDRESS', 'EMAIL_USER', 'EMAIL_PASSWORD', 'GMAIL_APP_PASSWORD', 'EMAIL_PASS', 'GEMINI_API_KEY']
+    for var in env_vars:
+        value = os.getenv(var)
+        logging.info(f"   {var}: {'✅ Set' if value else '❌ Not set'}")
+
     # Gerekli environment değişkenlerini kontrol et
     TWITTER_USERNAME = os.getenv('TWITTER_USERNAME')
     TWITTER_PASSWORD = os.getenv('TWITTER_PASSWORD')
     if not TWITTER_USERNAME or not TWITTER_PASSWORD:
-        logging.error("❌ Twitter kullanıcı adı veya şifre .env dosyasında eksik!")
-        print("❌ Twitter kullanıcı adı veya şifre .env dosyasında eksik!")
+        logging.error("❌ Twitter kullanıcı adı veya şifre environment variables'da eksik!")
+        print("❌ Twitter kullanıcı adı veya şifre environment variables'da eksik!")
         return
 
-    # Email ve Gemini API anahtarlarını kontrol et
-    if not os.getenv('EMAIL_ADDRESS') or not os.getenv('EMAIL_PASSWORD'):
-        logging.error("❌ Gmail bilgileri .env dosyasında eksik!")
-        print("❌ Gmail bilgileri .env dosyasında eksik!")
+    # Email bilgilerini kontrol et - birden fazla seçenek dene
+    EMAIL_ADDRESS = os.getenv('EMAIL_ADDRESS') or os.getenv('EMAIL_USER')
+    EMAIL_PASSWORD = os.getenv('EMAIL_PASSWORD') or os.getenv('GMAIL_APP_PASSWORD') or os.getenv('EMAIL_PASS')
+    
+    if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
+        logging.error("❌ Gmail bilgileri environment variables'da eksik!")
+        logging.error(f"   EMAIL_ADDRESS: {EMAIL_ADDRESS}")
+        logging.error(f"   EMAIL_PASSWORD: {'Set' if EMAIL_PASSWORD else 'Not set'}")
+        print("❌ Gmail bilgileri environment variables'da eksik!")
         return
+        
     if not os.getenv('GEMINI_API_KEY'):
-        logging.error("❌ Gemini API anahtarı .env dosyasında eksik!")
-        print("❌ Gemini API anahtarı .env dosyasında eksik!")
+        logging.error("❌ Gemini API anahtarı environment variables'da eksik!")
+        print("❌ Gemini API anahtarı environment variables'da eksik!")
         return
 
     # Sınıfları başlat
