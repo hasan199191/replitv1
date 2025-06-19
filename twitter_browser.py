@@ -746,31 +746,31 @@ class TwitterBrowser:
 
         try:
             self.logger.info(f"🔍 Getting latest tweet for @{username}")
-    
+
             # Kullanıcı profiline git
             profile_url = f"https://x.com/{username}"
             await self.page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(5)
-    
+
             # Sayfanın yüklendiğini kontrol et
             current_url = self.page.url
             if "login" in current_url or "flow" in current_url:
                 self.logger.error(f"❌ Redirected to login when accessing @{username}")
                 return None
-    
+
             # Tweet'leri bul - PINNED TWEET'İ ATLA
             try:
                 # Tüm tweet'leri al
                 all_tweets = await self.page.locator('article[data-testid="tweet"]').all()
                 self.logger.info(f"📊 Found {len(all_tweets)} tweets for @{username}")
-            
+
                 if not all_tweets:
                     self.logger.warning(f"⚠️ No tweets found for @{username}")
                     return None
-            
+
                 # Pinned tweet'i atla - ilk tweet pinned ise ikincisini al
                 first_tweet = all_tweets[0]
-            
+
                 # Pinned tweet kontrolü
                 try:
                     pinned_indicator = await first_tweet.locator('[data-testid="socialContext"]').count()
@@ -787,10 +787,10 @@ class TwitterBrowser:
             except Exception as e:
                 self.logger.warning(f"⚠️ No tweets found for @{username}: {e}")
                 return None
-    
+
             # Tweet bilgilerini al
             tweet_data = {'username': username}
-    
+
             # Tweet metni
             try:
                 text_selectors = [
@@ -799,7 +799,7 @@ class TwitterBrowser:
                     'span[lang]',
                     'div[dir="auto"] span'
                 ]
-        
+
                 tweet_text = ""
                 for selector in text_selectors:
                     try:
@@ -810,17 +810,17 @@ class TwitterBrowser:
                                 text = await elem.inner_text()
                                 if text and text.strip():
                                     text_parts.append(text.strip())
-                            if text_parts:
-                                tweet_text = " ".join(text_parts)
-                                break
+                        if text_parts:
+                            tweet_text = " ".join(text_parts)
+                            break
                 except Exception as e:
                     continue
-        
+
             tweet_data['text'] = tweet_text if tweet_text else "No text found"
-        
+
         except Exception as e:
             tweet_data['text'] = "No text found"
-    
+
         # Tweet zamanı
         try:
             time_element = await first_tweet.locator('time').first()
@@ -831,7 +831,7 @@ class TwitterBrowser:
                 tweet_data['time'] = None
         except:
             tweet_data['time'] = None
-    
+
         # Tweet URL'i
         try:
             link_element = await first_tweet.locator('a[href*="/status/"]').first()
@@ -847,12 +847,12 @@ class TwitterBrowser:
                 tweet_data['url'] = None
         except:
             tweet_data['url'] = None
-    
+
         self.logger.info(f"✅ Tweet data retrieved for @{username}")
         self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
-    
+
         return tweet_data
-    
+
     except Exception as e:
         self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
         return None
