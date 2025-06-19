@@ -39,44 +39,85 @@ class TwitterBrowser:
     
     async def find_first_locator(self, locator_getters, timeout=5000):
         """Verdiğiniz örnekteki find_first_locator fonksiyonu - async versiyonu"""
-        for get_locator in locator_getters:
+        for i, get_locator in enumerate(locator_getters):
             try:
                 locator = get_locator()
-                await locator.wait_for(state="visible", timeout=timeout)
-                return locator.first()
+                self.logger.info(f"🔍 Trying locator {i+1}/{len(locator_getters)}: {locator}")
+                # STRICT MODE FIX: .first() ekle
+                first_locator = locator.first()
+                await first_locator.wait_for(state="visible", timeout=timeout)
+                self.logger.info(f"✅ Found element with locator {i+1}")
+                return first_locator
             except PlaywrightTimeoutError:
+                self.logger.warning(f"⚠️ Locator {i+1} timeout")
                 continue
             except Exception as e:
-                self.logger.warning(f"⚠️ Locator failed: {e}")
+                self.logger.warning(f"⚠️ Locator {i+1} failed: {e}")
                 continue
         raise Exception("Element bulunamadı — selector'ları güncelleyin")
     
     async def open_tweet_compose(self):
-        """Tweet penceresini açma - Verdiğiniz örnekteki yaklaşım"""
+        """Tweet penceresini açma - GÜNCEL 2025 Selectors"""
         try:
             self.logger.info("🔍 Opening tweet compose dialog...")
-            
-            # Ana sayfada tweet kutusunu açar (click to focus)
+        
+            # BASIT ve ETKİLİ selectors - 2025
             compose_btn = await self.find_first_locator([
-                lambda: self.page.get_by_role("textbox", name=re.compile(r"ne oluyor\?|what's happening\?", re.I)),
-                lambda: self.page.locator('div[aria-label="Tweet text"]'),
-                lambda: self.page.locator('div[data-testid^="tweetTextarea_"]'),
-                lambda: self.page.locator('div[contenteditable="true"][aria-label*="What"]'),
-                lambda: self.page.locator('div[role="textbox"]'),
-                # Tweet butonu da dene
-                lambda: self.page.get_by_role("button", name=re.compile(r"tweet", re.I)),
+                # En basit yaklaşım - herhangi bir contenteditable div
+                lambda: self.page.locator('div[contenteditable="true"]'),
+            
+                # Tweet button - sidebar
                 lambda: self.page.locator('a[data-testid="SideNav_NewTweet_Button"]'),
-                lambda: self.page.locator('div[data-testid="SideNav_NewTweet_Button"]'),
-            ], timeout=10000)
+                lambda: self.page.locator('[data-testid="SideNav_NewTweet_Button"]'),
             
+                # Ana sayfa tweet kutusu
+                lambda: self.page.locator('div[data-testid="tweetTextarea_0"]'),
+            
+                # Role-based selectors
+                lambda: self.page.locator('div[role="textbox"]'),
+            
+                # Aria-label based
+                lambda: self.page.locator('div[aria-label*="What"]'),
+                lambda: self.page.locator('div[aria-label*="happening"]'),
+            
+                # Generic fallbacks
+                lambda: self.page.locator('div[aria-label="Tweet text"]'),
+                lambda: self.page.locator('textarea'),
+            ], timeout=15000)
+        
             await compose_btn.click()
-            await asyncio.sleep(2)
-            
+            await asyncio.sleep(3)
+        
             self.logger.info("✅ Tweet compose dialog opened")
             return compose_btn
-            
+        
         except Exception as e:
             self.logger.error(f"❌ Could not open tweet compose: {e}")
+        
+            # ENHANCED DEBUG: Sayfanın HTML'ini logla
+            try:
+                self.logger.info("🔍 DEBUG: Getting page content...")
+            
+                # Sayfadaki tüm clickable elementleri bul
+                all_buttons = await self.page.locator('button, a, div[role="button"], div[contenteditable="true"]').all()
+                self.logger.info(f"📊 Found {len(all_buttons)} clickable elements")
+            
+                for i, element in enumerate(all_buttons[:15]):  # İlk 15 element
+                    try:
+                        tag_name = await element.evaluate('el => el.tagName')
+                        text = await element.inner_text()
+                        aria_label = await element.get_attribute('aria-label')
+                        data_testid = await element.get_attribute('data-testid')
+                        role = await element.get_attribute('role')
+                        contenteditable = await element.get_attribute('contenteditable')
+                    
+                        self.logger.info(f"Element {i+1}: {tag_name}, text='{text[:30]}', aria-label='{aria_label}', data-testid='{data_testid}', role='{role}', contenteditable='{contenteditable}'")
+                    except Exception as elem_error:
+                        self.logger.warning(f"Element {i+1}: Error getting info - {elem_error}")
+                    
+            except Exception as debug_error:
+                self.logger.warning(f"⚠️ Enhanced debug failed: {debug_error}")
+        
             return None
     
     async def find_tweet_text_area(self):
@@ -85,12 +126,17 @@ class TwitterBrowser:
             self.logger.info("🔍 Looking for tweet text area in opened dialog...")
             
             text_area = await self.find_first_locator([
-                lambda: self.page.get_by_role("textbox", name=re.compile(r"tweet text|post text", re.I)),
-                lambda: self.page.locator('div[aria-label="Tweet text"]'),
-                lambda: self.page.locator('div[data-testid^="tweetTextarea_"]'),
+                # En yaygın selectors
+                lambda: self.page.locator('div[data-testid="tweetTextarea_0"]'),
                 lambda: self.page.locator('div[contenteditable="true"][aria-label*="Tweet"]'),
                 lambda: self.page.locator('div[contenteditable="true"][role="textbox"]'),
-                lambda: self.page.locator('div[contenteditable="true"]'),
+                lambda: self.page.locator('div[contenteditable="true"]').first(),
+                
+                # Semantic selectors
+                lambda: self.page.get_by_role("textbox", name=re.compile(r"tweet text|post text", re.I)),
+                
+                # Fallback
+                lambda: self.page.locator('div[aria-label="Tweet text"]'),
                 lambda: self.page.locator('div[role="textbox"]'),
             ], timeout=10000)
             
@@ -117,15 +163,23 @@ class TwitterBrowser:
             self.logger.info("🔍 Looking for send button...")
             
             send_btn = await self.find_first_locator([
-                lambda: self.page.get_by_role("button", name=re.compile(r"post|tweet", re.I)),
+                # En yaygın selectors
                 lambda: self.page.locator('div[data-testid="tweetButtonInline"]'),
                 lambda: self.page.locator('div[data-testid="tweetButton"]'),
                 lambda: self.page.locator('button[data-testid="tweetButton"]'),
                 lambda: self.page.locator('button[data-testid="tweetButtonInline"]'),
+                
+                # Semantic selectors
+                lambda: self.page.get_by_role("button", name=re.compile(r"post|tweet", re.I)),
+                
+                # Fallback
+                lambda: self.page.locator('button:has-text("Post")'),
+                lambda: self.page.locator('button:has-text("Tweet")'),
+                lambda: self.page.locator('div[role="button"]:has-text("Post")'),
             ], timeout=10000)
             
             await send_btn.click()
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
             
             self.logger.info("✅ Tweet sent!")
             return True
@@ -135,7 +189,7 @@ class TwitterBrowser:
             return False
     
     async def thread_tweet(self, texts: List[str]):
-        """Thread atma - Verdiğiniz örnekteki yaklaşım"""
+        """Thread atma - GÜNCEL yaklaşım"""
         try:
             self.logger.info(f"🧵 Creating thread with {len(texts)} tweets")
             
@@ -147,7 +201,8 @@ class TwitterBrowser:
             # İlk tweet'in text area'sını bul
             text_area = await self.find_tweet_text_area()
             if not text_area:
-                return False
+                # Compose area'nın kendisi text area olabilir
+                text_area = compose_area
             
             await self.fill_tweet(text_area, texts[0])
             
@@ -157,21 +212,30 @@ class TwitterBrowser:
                 
                 try:
                     add_btn = await self.find_first_locator([
-                        lambda: self.page.get_by_role("button", name=re.compile(r"\+", re.I)),
-                        lambda: self.page.locator('div[data-testid^="addTweetButton"]'),
+                        # Thread ekleme butonları
+                        lambda: self.page.locator('div[data-testid="addTweetButton"]'),
+                        lambda: self.page.locator('button[data-testid="addTweetButton"]'),
                         lambda: self.page.locator('div[aria-label="Add another post"]'),
                         lambda: self.page.locator('div[aria-label="Add another Tweet"]'),
                         lambda: self.page.locator('button[aria-label="Add post"]'),
+                        
+                        # Semantic
+                        lambda: self.page.get_by_role("button", name=re.compile(r"\+|add", re.I)),
+                        
+                        # Fallback
+                        lambda: self.page.locator('button:has-text("+")'),
+                        lambda: self.page.locator('div:has-text("+")'),
                     ], timeout=5000)
                     
                     await add_btn.click()
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
                     
                     # Yeni compose bölümü en son eleman oluyor
                     new_text_area = await self.find_first_locator([
-                        lambda: self.page.locator('div[aria-label="Tweet text"]').last(),
+                        lambda: self.page.locator(f'div[data-testid="tweetTextarea_{i}"]'),
                         lambda: self.page.locator('div[contenteditable="true"]').last(),
                         lambda: self.page.locator('div[role="textbox"]').last(),
+                        lambda: self.page.locator('div[aria-label="Tweet text"]').last(),
                     ], timeout=5000)
                     
                     await self.fill_tweet(new_text_area, text)
@@ -354,25 +418,25 @@ class TwitterBrowser:
         """HAFIF login kontrolü - navigasyon yapmadan"""
         try:
             current_time = time.time()
-            
-            # Çok sık kontrol etme - 1 saatte bir yeterli
-            if current_time - self.last_login_check < self.login_check_interval:
+        
+            # Çok sık kontrol etme - 30 dakikada bir yeterli
+            if current_time - self.last_login_check < 1800:  # 30 dakika
                 if self.is_logged_in:
                     self.logger.info("⚡ Skipping login check - recently verified")
                     return True
-            
+        
             self.logger.info("⚡ Lightweight login check...")
-            
+        
             # Mevcut URL'i kontrol et - navigasyon yapma
             current_url = self.page.url
             self.logger.info(f"📍 Current URL: {current_url}")
-            
+        
             # Login sayfasındaysak, login olmamışız
             if "login" in current_url or "flow" in current_url:
                 self.logger.info("❌ On login page - not logged in")
                 self.is_logged_in = False
                 return False
-            
+        
             # Home sayfasındaysak veya Twitter domain'indeyse
             if "x.com" in current_url or "twitter.com" in current_url:
                 if "/home" in current_url or "/compose" in current_url:
@@ -380,22 +444,22 @@ class TwitterBrowser:
                     self.is_logged_in = True
                     self.last_login_check = current_time
                     return True
-                
-                # Tweet alanı var mı hızlıca kontrol et
-                try:
-                    tweet_area = await self.page.query_selector('div[aria-label="Tweet text"]')
-                    if tweet_area:
-                        self.logger.info("✅ Tweet area found - logged in")
-                        self.is_logged_in = True
-                        self.last_login_check = current_time
-                        return True
-                except:
-                    pass
             
+            # Tweet alanı var mı hızlıca kontrol et
+            try:
+                tweet_area = await self.page.locator('div[contenteditable="true"]').first().count()
+                if tweet_area > 0:
+                    self.logger.info("✅ Tweet area found - logged in")
+                    self.is_logged_in = True
+                    self.last_login_check = current_time
+                    return True
+            except:
+                pass
+        
             self.logger.info("❌ Login status unclear")
             self.is_logged_in = False
             return False
-            
+        
         except Exception as e:
             self.logger.warning(f"⚠️ Lightweight check failed: {e}")
             self.is_logged_in = False
@@ -674,7 +738,7 @@ class TwitterBrowser:
             return False
     
     async def get_latest_tweet(self, username):
-        """Kullanıcının son tweet'ini al - AKILLI NAVIGASYON"""
+        """Kullanıcının son tweet'ini al - PINNED TWEET FIX"""
         # Hafif login kontrolü
         if not await self.lightweight_login_check():
             if not await self.login():
@@ -682,33 +746,51 @@ class TwitterBrowser:
 
         try:
             self.logger.info(f"🔍 Getting latest tweet for @{username}")
-        
+    
             # Kullanıcı profiline git
             profile_url = f"https://x.com/{username}"
             await self.page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(5)
-        
+    
             # Sayfanın yüklendiğini kontrol et
             current_url = self.page.url
             if "login" in current_url or "flow" in current_url:
                 self.logger.error(f"❌ Redirected to login when accessing @{username}")
                 return None
-        
-            # Tweet'leri bul - Modern Selectors
+    
+            # Tweet'leri bul - PINNED TWEET'İ ATLA
             try:
-                first_tweet = await self.find_first_locator([
-                    lambda: self.page.get_by_role("article"),
-                    lambda: self.page.locator('article[data-testid="tweet"]'),
-                    lambda: self.page.locator('div[data-testid="cellInnerDiv"] article'),
-                    lambda: self.page.locator('article[role="article"]'),
-                ], timeout=10000)
+                # Tüm tweet'leri al
+                all_tweets = await self.page.locator('article[data-testid="tweet"]').all()
+                self.logger.info(f"📊 Found {len(all_tweets)} tweets for @{username}")
+            
+                if not all_tweets:
+                    self.logger.warning(f"⚠️ No tweets found for @{username}")
+                    return None
+            
+                # Pinned tweet'i atla - ilk tweet pinned ise ikincisini al
+                first_tweet = all_tweets[0]
+            
+                # Pinned tweet kontrolü
+                try:
+                    pinned_indicator = await first_tweet.locator('[data-testid="socialContext"]').count()
+                    if pinned_indicator > 0:
+                        self.logger.info(f"📌 Skipping pinned tweet for @{username}")
+                        if len(all_tweets) > 1:
+                            first_tweet = all_tweets[1]
+                        else:
+                            self.logger.warning(f"⚠️ Only pinned tweet found for @{username}")
+                            return None
+                except:
+                    pass  # Pinned kontrolü başarısız olursa devam et
+                
             except Exception as e:
                 self.logger.warning(f"⚠️ No tweets found for @{username}: {e}")
                 return None
-        
+    
             # Tweet bilgilerini al
             tweet_data = {'username': username}
-        
+    
             # Tweet metni
             try:
                 text_selectors = [
@@ -717,11 +799,11 @@ class TwitterBrowser:
                     'span[lang]',
                     'div[dir="auto"] span'
                 ]
-            
+        
                 tweet_text = ""
                 for selector in text_selectors:
                     try:
-                        text_elements = await first_tweet.query_selector_all(selector)
+                        text_elements = await first_tweet.locator(selector).all()
                         if text_elements:
                             text_parts = []
                             for elem in text_elements:
@@ -731,49 +813,49 @@ class TwitterBrowser:
                             if text_parts:
                                 tweet_text = " ".join(text_parts)
                                 break
-                    except Exception as e:
-                        continue
-            
-                tweet_data['text'] = tweet_text if tweet_text else "No text found"
-            
-            except Exception as e:
-                tweet_data['text'] = "No text found"
+                except Exception as e:
+                    continue
         
-            # Tweet zamanı
-            try:
-                time_element = await first_tweet.query_selector('time')
-                if time_element:
-                    tweet_time = await time_element.get_attribute("datetime")
-                    tweet_data['time'] = tweet_time
-                else:
-                    tweet_data['time'] = None
-            except:
-                tweet_data['time'] = None
-        
-            # Tweet URL'i
-            try:
-                link_element = await first_tweet.query_selector('a[href*="/status/"]')
-                if link_element:
-                    href = await link_element.get_attribute("href")
-                    if href:
-                        if not href.startswith("https://"):
-                            href = f"https://x.com{href}"
-                        tweet_data['url'] = href
-                    else:
-                        tweet_data['url'] = None
-                else:
-                    tweet_data['url'] = None
-            except:
-                tweet_data['url'] = None
-        
-            self.logger.info(f"✅ Tweet data retrieved for @{username}")
-            self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
-        
-            return tweet_data
+            tweet_data['text'] = tweet_text if tweet_text else "No text found"
         
         except Exception as e:
-            self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
-            return None
+            tweet_data['text'] = "No text found"
+    
+        # Tweet zamanı
+        try:
+            time_element = await first_tweet.locator('time').first()
+            if time_element:
+                tweet_time = await time_element.get_attribute("datetime")
+                tweet_data['time'] = tweet_time
+            else:
+                tweet_data['time'] = None
+        except:
+            tweet_data['time'] = None
+    
+        # Tweet URL'i
+        try:
+            link_element = await first_tweet.locator('a[href*="/status/"]').first()
+            if link_element:
+                href = await link_element.get_attribute("href")
+                if href:
+                    if not href.startswith("https://"):
+                        href = f"https://x.com{href}"
+                    tweet_data['url'] = href
+                else:
+                    tweet_data['url'] = None
+            else:
+                tweet_data['url'] = None
+        except:
+            tweet_data['url'] = None
+    
+        self.logger.info(f"✅ Tweet data retrieved for @{username}")
+        self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
+    
+        return tweet_data
+    
+    except Exception as e:
+        self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
+        return None
     
     async def get_latest_tweet_id(self, username):
         """Bir kullanıcının son tweet ID'sini al"""
