@@ -458,15 +458,63 @@ class TwitterBrowser:
             return False
     
     async def post_thread(self, content):
-        """THREAD OLARAK tweet gönder - YENİDEN YAZILMIŞ"""
-        # Sadece login durumu bilinmiyorsa kontrol et
-        if not self.is_logged_in:
-            self.logger.info("🔍 Checking login status...")
+        """THREAD OLARAK tweet gönder - LOGIN KONTROLÜ DÜZELTİLDİ"""
+        try:
+            # MUTLAKA login kontrolü yap
+            self.logger.info("🔍 Checking login status before posting...")
             if not await self.quick_login_check():
-                self.logger.error("❌ Not logged in, attempting login...")
+                self.logger.warning("❌ Not logged in, attempting login...")
                 if not await self.login():
                     self.logger.error("❌ Login failed, cannot post thread")
                     return False
+        
+            # İçeriği işle
+            if isinstance(content, str):
+                tweets = self.smart_split_content(content, max_length=270)
+            elif isinstance(content, list):
+                tweets = []
+                for item in content:
+                    if isinstance(item, str):
+                        if len(item) > 270:
+                            split_tweets = self.smart_split_content(item, max_length=270)
+                            tweets.extend(split_tweets)
+                        else:
+                            tweets.append(item)
+                else:
+                    tweets.append(str(item))
+        else:
+            tweets = [str(content)]
+    
+        if not tweets:
+            self.logger.error("❌ No valid tweets to send")
+            return False
+    
+        self.logger.info(f"🧵 Sending thread with {len(tweets)} tweets")
+    
+        # Home sayfasına git - TEKRAR LOGIN KONTROLÜ
+        self.logger.info("🏠 Going to home page...")
+        await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(3)
+        
+        # URL kontrolü - login sayfasına yönlendirildik mi?
+        current_url = self.page.url
+        self.logger.info(f"📍 Current URL after home navigation: {current_url}")
+        
+        if "login" in current_url or "flow" in current_url:
+            self.logger.error("❌ Redirected to login page! Attempting re-login...")
+            if not await self.login():
+                self.logger.error("❌ Re-login failed")
+                return False
+            
+            # Login sonrası tekrar home'a git
+            await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
+            
+            # Tekrar kontrol et
+            current_url = self.page.url
+            if "login" in current_url or "flow" in current_url:
+                self.logger.error("❌ Still on login page after re-login attempt")
+                return False
     
         try:
             # İçeriği işle
