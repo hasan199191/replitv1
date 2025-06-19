@@ -80,48 +80,48 @@ class TwitterBrowser:
                 lambda: self.page.locator('div[aria-label="Tweet text"]'),
                 lambda: self.page.locator('textarea'),
             ], timeout=15000)
-    
-        await compose_btn.click()
-        await asyncio.sleep(3)
-        self.logger.info("✅ Tweet compose dialog opened")
-        return compose_btn
-    
-    except Exception as e:
-        self.logger.error(f"❌ Could not open tweet compose: {e}")
+
+            await compose_btn.click()
+            await asyncio.sleep(3)
+            self.logger.info("✅ Tweet compose dialog opened")
+            return compose_btn
+
+        except Exception as e:
+            self.logger.error(f"❌ Could not open tweet compose: {e}")
         
-        # ENHANCED DEBUG: Sayfanın durumunu kontrol et
-        try:
-            self.logger.info("🔍 DEBUG: Checking page state...")
+            # ENHANCED DEBUG: Sayfanın durumunu kontrol et
+            try:
+                self.logger.info("🔍 DEBUG: Checking page state...")
             
-            # Sayfanın URL'ini kontrol et
-            current_url = self.page.url
-            self.logger.info(f"📍 Current URL: {current_url}")
+                # Sayfanın URL'ini kontrol et
+                current_url = self.page.url
+                self.logger.info(f"📍 Current URL: {current_url}")
             
-            # Sayfanın yüklenip yüklenmediğini kontrol et
-            await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
+                # Sayfanın yüklenip yüklenmediğini kontrol et
+                await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
             
-            # Tıklanabilir elementleri bul
-            all_buttons = await self.page.locator('button, a, div[role="button"], div[contenteditable="true"]').all()
-            self.logger.info(f"📊 Found {len(all_buttons)} clickable elements")
+                # Tıklanabilir elementleri bul
+                all_buttons = await self.page.locator('button, a, div[role="button"], div[contenteditable="true"]').all()
+                self.logger.info(f"📊 Found {len(all_buttons)} clickable elements")
             
-            # İlk 10 elementi detaylı logla
-            for i, element in enumerate(all_buttons[:10]):
-                try:
-                    tag_name = await element.evaluate('el => el.tagName')
-                    text = await element.inner_text()
-                    aria_label = await element.get_attribute('aria-label')
-                    data_testid = await element.get_attribute('data-testid')
-                    role = await element.get_attribute('role')
-                    contenteditable = await element.get_attribute('contenteditable')
+                # İlk 10 elementi detaylı logla
+                for i, element in enumerate(all_buttons[:10]):
+                    try:
+                        tag_name = await element.evaluate('el => el.tagName')
+                        text = await element.inner_text()
+                        aria_label = await element.get_attribute('aria-label')
+                        data_testid = await element.get_attribute('data-testid')
+                        role = await element.get_attribute('role')
+                        contenteditable = await element.get_attribute('contenteditable')
                     
-                    self.logger.info(f"Element {i+1}: {tag_name}, text='{text[:30]}', aria-label='{aria_label}', data-testid='{data_testid}', role='{role}', contenteditable='{contenteditable}'")
+                        self.logger.info(f"Element {i+1}: {tag_name}, text='{text[:30]}', aria-label='{aria_label}', data-testid='{data_testid}', role='{role}', contenteditable='{contenteditable}'")
                 except Exception as elem_error:
                     self.logger.warning(f"Element {i+1}: Error getting info - {elem_error}")
                     
-        except Exception as debug_error:
-            self.logger.warning(f"⚠️ Enhanced debug failed: {debug_error}")
-    
-        return None
+            except Exception as debug_error:
+                self.logger.warning(f"⚠️ Enhanced debug failed: {debug_error}")
+
+            return None
     
     async def find_tweet_text_area(self):
         """Tweet yazma alanını bul - Dialog açıldıktan sonra"""
