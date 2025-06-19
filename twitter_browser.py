@@ -467,8 +467,8 @@ class TwitterBrowser:
                 if not await self.login():
                     self.logger.error("❌ Login failed, cannot post thread")
                     return False
-        
-            # İçeriği işle
+    
+        # İçeriği işle
             if isinstance(content, str):
                 tweets = self.smart_split_content(content, max_length=270)
             elif isinstance(content, list):
@@ -478,33 +478,31 @@ class TwitterBrowser:
                         if len(item) > 270:
                             split_tweets = self.smart_split_content(item, max_length=270)
                             tweets.extend(split_tweets)
-                        else:
-                            tweets.append(item)
+                    else:
+                        tweets.append(str(item))
                 else:
-                    tweets.append(str(item))
-        else:
-            tweets = [str(content)]
-    
-        if not tweets:
-            self.logger.error("❌ No valid tweets to send")
-            return False
-    
-        self.logger.info(f"🧵 Sending thread with {len(tweets)} tweets")
-    
-        # Home sayfasına git - TEKRAR LOGIN KONTROLÜ
-        self.logger.info("🏠 Going to home page...")
-        await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(3)
-        
-        # URL kontrolü - login sayfasına yönlendirildik mi?
-        current_url = self.page.url
-        self.logger.info(f"📍 Current URL after home navigation: {current_url}")
-        
-        if "login" in current_url or "flow" in current_url:
-            self.logger.error("❌ Redirected to login page! Attempting re-login...")
-            if not await self.login():
-                self.logger.error("❌ Re-login failed")
+                    tweets.append(str(content)]
+
+            if not tweets:
+                self.logger.error("❌ No valid tweets to send")
                 return False
+
+            self.logger.info(f"🧵 Sending thread with {len(tweets)} tweets")
+
+            # Home sayfasına git - TEKRAR LOGIN KONTROLÜ
+            self.logger.info("🏠 Going to home page...")
+            await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(3)
+        
+            # URL kontrolü - login sayfasına yönlendirildik mi?
+            current_url = self.page.url
+            self.logger.info(f"📍 Current URL after home navigation: {current_url}")
+        
+            if "login" in current_url or "flow" in current_url:
+                self.logger.error("❌ Redirected to login page! Attempting re-login...")
+                if not await self.login():
+                    self.logger.error("❌ Re-login failed")
+                    return False
             
             # Login sonrası tekrar home'a git
             await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
@@ -515,67 +513,29 @@ class TwitterBrowser:
             if "login" in current_url or "flow" in current_url:
                 self.logger.error("❌ Still on login page after re-login attempt")
                 return False
-    
-        try:
-            # İçeriği işle
-            if isinstance(content, str):
-                tweets = self.smart_split_content(content, max_length=270)
-            elif isinstance(content, list):
-                tweets = []
-                for item in content:
-                    if isinstance(item, str):
-                        if len(item) > 270:
-                            split_tweets = self.smart_split_content(item, max_length=270)
-                            tweets.extend(split_tweets)
-                        else:
-                            tweets.append(item)
-                    else:
-                        tweets.append(str(item))
-            else:
-                tweets = [str(content)]
-        
-            if not tweets:
-                self.logger.error("❌ No valid tweets to send")
-                return False
-        
-            self.logger.info(f"🧵 Sending thread with {len(tweets)} tweets")
-        
-            # Home sayfasına git ve orada kal
-            self.logger.info("🏠 Going to home page...")
-            await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(5)
-        
-            # Debug: Analyze page elements if we can't find tweet button
+
+        # Debug: Analyze page elements
             self.logger.info("🔍 Analyzing page for tweet buttons...")
             await self.debug_page_elements()
-            
-            # Tweet butonu selectors - güncel Twitter arayüzü için
+        
+        # Tweet butonu selectors - güncel Twitter arayüzü için
             tweet_button_selectors = [
-                # Yeni X.com selectors
-                'a[data-testid="SideNav_NewTweet_Button"]',  # Sidebar tweet button
-                'div[data-testid="SideNav_NewTweet_Button"]',  # Alternative
-                'button[data-testid="SideNav_NewTweet_Button"]',  # Button version
-                
-                # Post button variations
-                'a[aria-label="Post"]',  # Post button
-                'button[aria-label="Post"]',  # Post button alternative
-                'div[aria-label="Post"]',  # Div version
-                
-                # Compose variations
-                'a[href="/compose/tweet"]',  # Compose link
-                'a[href="/compose/post"]',  # New compose link
-                
-                # Generic tweet buttons
-                '[data-testid="tweetButtonInline"]',  # Inline tweet button
-                '[data-testid="tweetButton"]',  # Generic tweet button
-                
-                # Fallback selectors
+                'a[data-testid="SideNav_NewTweet_Button"]',
+                'div[data-testid="SideNav_NewTweet_Button"]',
+                'button[data-testid="SideNav_NewTweet_Button"]',
+                'a[aria-label="Post"]',
+                'button[aria-label="Post"]',
+                'div[aria-label="Post"]',
+                'a[href="/compose/tweet"]',
+                'a[href="/compose/post"]',
+                '[data-testid="tweetButtonInline"]',
+                '[data-testid="tweetButton"]',
                 'a[role="button"][aria-label*="Tweet"]',
                 'button[role="button"][aria-label*="Tweet"]',
                 'a[role="button"][aria-label*="Post"]',
                 'button[role="button"][aria-label*="Post"]'
             ]
-        
+    
             tweet_button = None
             for selector in tweet_button_selectors:
                 try:
@@ -591,24 +551,24 @@ class TwitterBrowser:
                 except Exception as e:
                     self.logger.warning(f"⚠️ Selector {selector} failed: {e}")
                     continue
-        
+    
             if not tweet_button:
                 self.logger.error("❌ Could not find tweet button")
                 return False
-        
-            # Tweet butonuna tıkla
+    
+        # Tweet butonuna tıkla
             await tweet_button.click()
             await asyncio.sleep(3)
-        
-            # Tweet yazma alanını bul - güncel selectors
+    
+        # Tweet yazma alanını bul
             compose_selectors = [
-                'div[data-testid="tweetTextarea_0"]',  # Ana textarea
-                'div[contenteditable="true"][aria-label*="What"]',  # What's happening
-                'div[contenteditable="true"][data-testid*="tweet"]',  # Tweet içeren
-                'div[contenteditable="true"][role="textbox"]',  # Textbox role
-                'div[contenteditable="true"]'  # Genel contenteditable
+                'div[data-testid="tweetTextarea_0"]',
+                'div[contenteditable="true"][aria-label*="What"]',
+                'div[contenteditable="true"][data-testid*="tweet"]',
+                'div[contenteditable="true"][role="textbox"]',
+                'div[contenteditable="true"]'
             ]
-        
+    
             compose_area = None
             for selector in compose_selectors:
                 try:
@@ -624,31 +584,31 @@ class TwitterBrowser:
                 except Exception as e:
                     self.logger.warning(f"⚠️ Compose selector {selector} failed: {e}")
                     continue
-        
+    
             if not compose_area:
                 self.logger.error("❌ Could not find compose area")
                 return False
-        
-            # İlk tweet'i yaz
+    
+        # İlk tweet'i yaz
             await compose_area.click()
             await asyncio.sleep(1)
             await compose_area.fill(tweets[0])
             self.logger.info(f"✅ First tweet written: {tweets[0][:50]}...")
             await asyncio.sleep(2)
-        
-            # Eğer birden fazla tweet varsa thread oluştur
+    
+        # Eğer birden fazla tweet varsa thread oluştur
             if len(tweets) > 1:
                 for i, tweet_text in enumerate(tweets[1:], start=2):
                     self.logger.info(f"➕ Adding tweet {i}/{len(tweets)}")
-                
-                    # Thread butonunu bul ve tıkla
+            
+                # Thread butonunu bul ve tıkla
                     thread_button_selectors = [
                         'div[aria-label="Add another post"]',
                         'div[aria-label="Add another Tweet"]',
                         'button[aria-label="Add post"]',
                         'div[data-testid="addButton"]'
                     ]
-                
+            
                     thread_button = None
                     for selector in thread_button_selectors:
                         try:
@@ -658,20 +618,20 @@ class TwitterBrowser:
                         except Exception as e:
                             self.logger.warning(f"⚠️ Thread button selector {selector} failed: {e}")
                             continue
-                
+            
                     if not thread_button:
                         self.logger.warning(f"⚠️ Could not find thread button, posting single tweet")
                         break
-                
+            
                     await thread_button.click()
                     await asyncio.sleep(3)
-                
-                    # Yeni tweet alanını bul
+            
+                # Yeni tweet alanını bul
                     new_compose_selectors = [
                         f'div[data-testid="tweetTextarea_{i-1}"]',
                         'div[contenteditable="true"]:last-of-type'
                     ]
-                
+            
                     new_compose_area = None
                     for selector in new_compose_selectors:
                         try:
@@ -681,13 +641,13 @@ class TwitterBrowser:
                         except Exception as e:
                             self.logger.warning(f"⚠️ New compose selector {selector} failed: {e}")
                             continue
-                
+            
                     if not new_compose_area:
-                        # Tüm compose alanlarını bul ve sonuncusunu kullan
+                    # Tüm compose alanlarını bul ve sonuncusunu kullan
                         all_areas = await self.page.query_selector_all('div[contenteditable="true"]')
                         if all_areas and len(all_areas) >= i:
                             new_compose_area = all_areas[-1]
-                
+            
                     if new_compose_area:
                         await new_compose_area.click()
                         await asyncio.sleep(1)
@@ -697,15 +657,15 @@ class TwitterBrowser:
                     else:
                         self.logger.error(f"❌ Could not find compose area for tweet {i}")
                         break
-        
-            # Tweet/Thread'i gönder
+    
+        # Tweet/Thread'i gönder
             post_button_selectors = [
                 'div[data-testid="tweetButton"]',
                 'button[data-testid="tweetButton"]',
                 'div[data-testid="tweetButtonInline"]',
                 'button[role="button"][aria-label*="Post"]'
             ]
-        
+    
             post_button = None
             for selector in post_button_selectors:
                 try:
@@ -720,18 +680,18 @@ class TwitterBrowser:
                 except Exception as e:
                     self.logger.warning(f"⚠️ Post button selector {selector} failed: {e}")
                     continue
-        
+    
             if not post_button:
                 self.logger.error("❌ Could not find enabled post button")
                 return False
-        
-            # Gönder
+    
+        # Gönder
             await post_button.click()
             await asyncio.sleep(5)
-        
+    
             self.logger.info("🎉 THREAD SUCCESSFULLY POSTED!")
             return True
-        
+    
         except Exception as e:
             self.logger.error(f"❌ Thread posting error: {e}")
             return False
