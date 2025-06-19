@@ -38,14 +38,15 @@ class TwitterBrowser:
             self.logger.addHandler(handler)
     
     async def find_first_locator(self, locator_getters, timeout=5000):
-        """Locator bulma fonksiyonu"""
+        """Locator bulma fonksiyonu - DÜZELTİLMİŞ"""
         for i, get_locator in enumerate(locator_getters):
             try:
+            # Lambda kontrolünü düzelt
                 if callable(get_locator):
                     locator = get_locator()
                 else:
                     locator = get_locator
-                
+            
                 self.logger.info(f"🔍 Trying locator {i+1}/{len(locator_getters)}")
                 first_locator = locator.first()
                 await first_locator.wait_for(state="visible", timeout=timeout)
@@ -60,21 +61,22 @@ class TwitterBrowser:
         raise Exception("Element bulunamadı")
     
     async def open_tweet_compose(self):
-        """Tweet penceresini açma"""
+        """Tweet penceresini açma - 2025 MODERN SELECTORS"""
         try:
             self.logger.info("🔍 Opening tweet compose dialog...")
             await asyncio.sleep(2)
-        
+    
+        # MODERN 2025 selectors - lambda'sız
             compose_btn = await self.find_first_locator([
-                lambda: self.page.locator('div[contenteditable="true"]'),
-                lambda: self.page.locator('a[data-testid="SideNav_NewTweet_Button"]'),
-                lambda: self.page.locator('[data-testid="SideNav_NewTweet_Button"]'),
-                lambda: self.page.locator('div[data-testid="tweetTextarea_0"]'),
-                lambda: self.page.locator('div[role="textbox"]'),
-                lambda: self.page.locator('div[aria-label*="What"]'),
-                lambda: self.page.locator('div[aria-label*="happening"]'),
-                lambda: self.page.locator('div[aria-label="Tweet text"]'),
-                lambda: self.page.locator('textarea'),
+                self.page.locator('[data-testid="SideNav_NewTweet_Button"]'),
+                self.page.locator('a[data-testid="SideNav_NewTweet_Button"]'),
+                self.page.locator('div[data-testid="SideNav_NewTweet_Button"]'),
+                self.page.locator('a[href="/compose/tweet"]'),
+                self.page.locator('[aria-label*="Tweet"]'),
+                self.page.locator('[aria-label*="Post"]'),
+                self.page.locator('div[contenteditable="true"]'),
+                self.page.locator('div[data-testid="tweetTextarea_0"]'),
+                self.page.locator('div[role="textbox"]'),
             ], timeout=15000)
 
             await compose_btn.click()
@@ -84,17 +86,27 @@ class TwitterBrowser:
 
         except Exception as e:
             self.logger.error(f"❌ Could not open tweet compose: {e}")
-            
+        
             try:
                 self.logger.info("🔍 DEBUG: Checking page state...")
                 current_url = self.page.url
                 self.logger.info(f"📍 Current URL: {current_url}")
-                
+            
+            # Login sayfasındaysak, tekrar login dene
+                if "login" in current_url or "flow" in current_url:
+                    self.logger.warning("⚠️ Redirected to login page, attempting re-login...")
+                    if await self.login():
+                        self.logger.info("✅ Re-login successful, retrying compose...")
+                        return await self.open_tweet_compose()
+                    else:
+                        self.logger.error("❌ Re-login failed")
+                        return None
+            
                 await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-                
+            
                 all_buttons = await self.page.locator('button, a, div[role="button"], div[contenteditable="true"]').all()
                 self.logger.info(f"📊 Found {len(all_buttons)} clickable elements")
-                
+            
                 for i, element in enumerate(all_buttons[:10]):
                     try:
                         tag_name = await element.evaluate('el => el.tagName')
@@ -102,30 +114,29 @@ class TwitterBrowser:
                         self.logger.info(f"Element {i+1}: {tag_name}, text='{text[:30]}'")
                     except Exception:
                         self.logger.warning(f"Element {i+1}: Error getting info")
-                        
+                    
             except Exception:
                 self.logger.warning("⚠️ Enhanced debug failed")
 
             return None
     
     async def find_tweet_text_area(self):
-        """Tweet yazma alanını bul"""
+        """Tweet yazma alanını bul - LAMBDA'SIZ"""
         try:
             self.logger.info("🔍 Looking for tweet text area...")
-            
+        
             text_area = await self.find_first_locator([
-                lambda: self.page.locator('div[data-testid="tweetTextarea_0"]'),
-                lambda: self.page.locator('div[contenteditable="true"][aria-label*="Tweet"]'),
-                lambda: self.page.locator('div[contenteditable="true"][role="textbox"]'),
-                lambda: self.page.locator('div[contenteditable="true"]').first(),
-                lambda: self.page.get_by_role("textbox", name=re.compile(r"tweet text|post text", re.I)),
-                lambda: self.page.locator('div[aria-label="Tweet text"]'),
-                lambda: self.page.locator('div[role="textbox"]'),
+                self.page.locator('div[data-testid="tweetTextarea_0"]'),
+                self.page.locator('div[contenteditable="true"][aria-label*="Tweet"]'),
+                self.page.locator('div[contenteditable="true"][role="textbox"]'),
+                self.page.locator('div[contenteditable="true"]').first(),
+                self.page.locator('div[aria-label="Tweet text"]'),
+                self.page.locator('div[role="textbox"]'),
             ], timeout=10000)
-            
+        
             self.logger.info("✅ Found tweet text area")
             return text_area
-            
+        
         except Exception as e:
             self.logger.error(f"❌ Could not find tweet text area: {e}")
             return None
@@ -141,79 +152,79 @@ class TwitterBrowser:
             return False
     
     async def send_tweet(self):
-        """Tweet'i gönderme"""
+        """Tweet'i gönderme - LAMBDA'SIZ"""
         try:
             self.logger.info("🔍 Looking for send button...")
-            
+        
             send_btn = await self.find_first_locator([
-                lambda: self.page.locator('div[data-testid="tweetButtonInline"]'),
-                lambda: self.page.locator('div[data-testid="tweetButton"]'),
-                lambda: self.page.locator('button[data-testid="tweetButton"]'),
-                lambda: self.page.locator('button[data-testid="tweetButtonInline"]'),
-                lambda: self.page.get_by_role("button", name=re.compile(r"post|tweet", re.I)),
-                lambda: self.page.locator('button:has-text("Post")'),
-                lambda: self.page.locator('button:has-text("Tweet")'),
-                lambda: self.page.locator('div[role="button"]:has-text("Post")'),
+                self.page.locator('div[data-testid="tweetButtonInline"]'),
+                self.page.locator('div[data-testid="tweetButton"]'),
+                self.page.locator('button[data-testid="tweetButton"]'),
+                self.page.locator('button[data-testid="tweetButtonInline"]'),
+                self.page.locator('button:has-text("Post")'),
+                self.page.locator('button:has-text("Tweet")'),
+                self.page.locator('div[role="button"]:has-text("Post")'),
             ], timeout=10000)
-            
+        
             await send_btn.click()
             await asyncio.sleep(5)
-            
+        
             self.logger.info("✅ Tweet sent!")
             return True
-            
+        
         except Exception as e:
             self.logger.error(f"❌ Could not send tweet: {e}")
             return False
     
     async def thread_tweet(self, texts: List[str]):
-        """Thread atma"""
+        """Thread atma - LAMBDA'SIZ"""
         try:
             self.logger.info(f"🧵 Creating thread with {len(texts)} tweets")
-            
+        
             compose_area = await self.open_tweet_compose()
             if not compose_area:
                 return False
-            
+        
             text_area = await self.find_tweet_text_area()
             if not text_area:
                 text_area = compose_area
-            
+        
             await self.fill_tweet(text_area, texts[0])
-            
+        
             for i, text in enumerate(texts[1:], start=1):
                 self.logger.info(f"➕ Adding tweet {i+1}/{len(texts)}")
-                
+            
                 try:
                     add_btn = await self.find_first_locator([
-                        lambda: self.page.locator('div[data-testid="addTweetButton"]'),
-                        lambda: self.page.locator('button[data-testid="addTweetButton"]'),
-                        lambda: self.page.locator('div[aria-label="Add another post"]'),
-                        lambda: self.page.locator('div[aria-label="Add another Tweet"]'),
-                        lambda: self.page.locator('button[aria-label="Add post"]'),
-                        lambda: self.page.get_by_role("button", name=re.compile(r"\+|add", re.I)),
-                        lambda: self.page.locator('button:has-text("+")'),
-                        lambda: self.page.locator('div:has-text("+")'),
+                        self.page.locator('div[data-testid="addButton"]'),
+                        self.page.locator('button[data-testid="addButton"]'),
+                        self.page.locator('div[data-testid="addTweetButton"]'),
+                        self.page.locator('button[data-testid="addTweetButton"]'),
+                        self.page.locator('div[aria-label="Add another post"]'),
+                        self.page.locator('div[aria-label="Add another Tweet"]'),
+                        self.page.locator('button[aria-label="Add post"]'),
+                        self.page.locator('button:has-text("+")'),
+                        self.page.locator('div:has-text("+")'),
                     ], timeout=5000)
-                    
+                
                     await add_btn.click()
                     await asyncio.sleep(3)
-                    
+                
                     new_text_area = await self.find_first_locator([
-                        lambda: self.page.locator(f'div[data-testid="tweetTextarea_{i}"]'),
-                        lambda: self.page.locator('div[contenteditable="true"]').last(),
-                        lambda: self.page.locator('div[role="textbox"]').last(),
-                        lambda: self.page.locator('div[aria-label="Tweet text"]').last(),
+                        self.page.locator(f'div[data-testid="tweetTextarea_{i}"]'),
+                        self.page.locator('div[contenteditable="true"]').last(),
+                        self.page.locator('div[role="textbox"]').last(),
+                        self.page.locator('div[aria-label="Tweet text"]').last(),
                     ], timeout=5000)
-                    
+                
                     await self.fill_tweet(new_text_area, text)
-                    
+                
                 except Exception as e:
                     self.logger.warning(f"⚠️ Could not add tweet {i+1}: {e}")
                     break
-            
+        
             return await self.send_tweet()
-            
+        
         except Exception as e:
             self.logger.error(f"❌ Thread creation failed: {e}")
             return False
