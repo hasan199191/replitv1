@@ -810,52 +810,52 @@ class TwitterBrowser:
                                 text = await elem.inner_text()
                                 if text and text.strip():
                                     text_parts.append(text.strip())
-                        if text_parts:
-                            tweet_text = " ".join(text_parts)
-                            break
-                except Exception as e:
-                    continue
+                            if text_parts:
+                                tweet_text = " ".join(text_parts)
+                                break
+                    except Exception as e:
+                        continue
 
-            tweet_data['text'] = tweet_text if tweet_text else "No text found"
+                tweet_data['text'] = tweet_text if tweet_text else "No text found"
 
-        except Exception as e:
-            tweet_data['text'] = "No text found"
+            except Exception as e:
+                tweet_data['text'] = "No text found"
 
-        # Tweet zamanı
-        try:
-            time_element = await first_tweet.locator('time').first()
-            if time_element:
-                tweet_time = await time_element.get_attribute("datetime")
-                tweet_data['time'] = tweet_time
-            else:
+            # Tweet zamanı
+            try:
+                time_element = await first_tweet.locator('time').first()
+                if time_element:
+                    tweet_time = await time_element.get_attribute("datetime")
+                    tweet_data['time'] = tweet_time
+                else:
+                    tweet_data['time'] = None
+            except:
                 tweet_data['time'] = None
-        except:
-            tweet_data['time'] = None
 
-        # Tweet URL'i
-        try:
-            link_element = await first_tweet.locator('a[href*="/status/"]').first()
-            if link_element:
-                href = await link_element.get_attribute("href")
-                if href:
-                    if not href.startswith("https://"):
-                        href = f"https://x.com{href}"
-                    tweet_data['url'] = href
+            # Tweet URL'i
+            try:
+                link_element = await first_tweet.locator('a[href*="/status/"]').first()
+                if link_element:
+                    href = await link_element.get_attribute("href")
+                    if href:
+                        if not href.startswith("https://"):
+                            href = f"https://x.com{href}"
+                        tweet_data['url'] = href
+                    else:
+                        tweet_data['url'] = None
                 else:
                     tweet_data['url'] = None
-            else:
+            except:
                 tweet_data['url'] = None
-        except:
-            tweet_data['url'] = None
 
-        self.logger.info(f"✅ Tweet data retrieved for @{username}")
-        self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
+            self.logger.info(f"✅ Tweet data retrieved for @{username}")
+            self.logger.info(f"📝 Text: {tweet_data['text'][:100]}...")
 
-        return tweet_data
+            return tweet_data
 
-    except Exception as e:
-        self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
-        return None
+        except Exception as e:
+            self.logger.error(f"❌ Error getting tweet for @{username}: {e}")
+            return None
     
     async def get_latest_tweet_id(self, username):
         """Bir kullanıcının son tweet ID'sini al"""
