@@ -480,8 +480,7 @@ class TwitterBrowser:
                             tweets.extend(split_tweets)
                     else:
                         tweets.append(str(item))
-                else:
-                    tweets.append(str(content)]
+                tweets.append(str(content))
 
             if not tweets:
                 self.logger.error("❌ No valid tweets to send")
