@@ -38,12 +38,16 @@ class TwitterBrowser:
             self.logger.addHandler(handler)
     
     async def find_first_locator(self, locator_getters, timeout=5000):
-        """Verdiğiniz örnekteki find_first_locator fonksiyonu - async versiyonu"""
+        """Locator bulma fonksiyonu - DÜZELTİLMİŞ"""
         for i, get_locator in enumerate(locator_getters):
             try:
-                locator = get_locator()
+                # Lambda fonksiyonunu çağır
+                if callable(get_locator):
+                    locator = get_locator()
+                else:
+                    locator = get_locator
+                
                 self.logger.info(f"🔍 Trying locator {i+1}/{len(locator_getters)}: {locator}")
-                # STRICT MODE FIX: .first() ekle
                 first_locator = locator.first()
                 await first_locator.wait_for(state="visible", timeout=timeout)
                 self.logger.info(f"✅ Found element with locator {i+1}")
@@ -57,68 +61,67 @@ class TwitterBrowser:
         raise Exception("Element bulunamadı — selector'ları güncelleyin")
     
     async def open_tweet_compose(self):
-        """Tweet penceresini açma - GÜNCEL 2025 Selectors"""
+        """Tweet penceresini açma - DÜZELTİLMİŞ"""
         try:
             self.logger.info("🔍 Opening tweet compose dialog...")
         
-            # BASIT ve ETKİLİ selectors - 2025
+            # Sayfanın yüklenmesini bekle
+            await asyncio.sleep(2)
+        
+            # Tüm locator'ları LAMBDA ile sar
             compose_btn = await self.find_first_locator([
-                # En basit yaklaşım - herhangi bir contenteditable div
                 lambda: self.page.locator('div[contenteditable="true"]'),
-            
-                # Tweet button - sidebar
                 lambda: self.page.locator('a[data-testid="SideNav_NewTweet_Button"]'),
                 lambda: self.page.locator('[data-testid="SideNav_NewTweet_Button"]'),
-            
-                # Ana sayfa tweet kutusu
                 lambda: self.page.locator('div[data-testid="tweetTextarea_0"]'),
-            
-                # Role-based selectors
                 lambda: self.page.locator('div[role="textbox"]'),
-            
-                # Aria-label based
                 lambda: self.page.locator('div[aria-label*="What"]'),
                 lambda: self.page.locator('div[aria-label*="happening"]'),
-            
-                # Generic fallbacks
                 lambda: self.page.locator('div[aria-label="Tweet text"]'),
                 lambda: self.page.locator('textarea'),
             ], timeout=15000)
+    
+        await compose_btn.click()
+        await asyncio.sleep(3)
+        self.logger.info("✅ Tweet compose dialog opened")
+        return compose_btn
+    
+    except Exception as e:
+        self.logger.error(f"❌ Could not open tweet compose: {e}")
         
-            await compose_btn.click()
-            await asyncio.sleep(3)
-        
-            self.logger.info("✅ Tweet compose dialog opened")
-            return compose_btn
-        
-        except Exception as e:
-            self.logger.error(f"❌ Could not open tweet compose: {e}")
-        
-            # ENHANCED DEBUG: Sayfanın HTML'ini logla
-            try:
-                self.logger.info("🔍 DEBUG: Getting page content...")
+        # ENHANCED DEBUG: Sayfanın durumunu kontrol et
+        try:
+            self.logger.info("🔍 DEBUG: Checking page state...")
             
-                # Sayfadaki tüm clickable elementleri bul
-                all_buttons = await self.page.locator('button, a, div[role="button"], div[contenteditable="true"]').all()
-                self.logger.info(f"📊 Found {len(all_buttons)} clickable elements")
+            # Sayfanın URL'ini kontrol et
+            current_url = self.page.url
+            self.logger.info(f"📍 Current URL: {current_url}")
             
-                for i, element in enumerate(all_buttons[:15]):  # İlk 15 element
-                    try:
-                        tag_name = await element.evaluate('el => el.tagName')
-                        text = await element.inner_text()
-                        aria_label = await element.get_attribute('aria-label')
-                        data_testid = await element.get_attribute('data-testid')
-                        role = await element.get_attribute('role')
-                        contenteditable = await element.get_attribute('contenteditable')
+            # Sayfanın yüklenip yüklenmediğini kontrol et
+            await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
+            
+            # Tıklanabilir elementleri bul
+            all_buttons = await self.page.locator('button, a, div[role="button"], div[contenteditable="true"]').all()
+            self.logger.info(f"📊 Found {len(all_buttons)} clickable elements")
+            
+            # İlk 10 elementi detaylı logla
+            for i, element in enumerate(all_buttons[:10]):
+                try:
+                    tag_name = await element.evaluate('el => el.tagName')
+                    text = await element.inner_text()
+                    aria_label = await element.get_attribute('aria-label')
+                    data_testid = await element.get_attribute('data-testid')
+                    role = await element.get_attribute('role')
+                    contenteditable = await element.get_attribute('contenteditable')
                     
-                        self.logger.info(f"Element {i+1}: {tag_name}, text='{text[:30]}', aria-label='{aria_label}', data-testid='{data_testid}', role='{role}', contenteditable='{contenteditable}'")
-                    except Exception as elem_error:
-                        self.logger.warning(f"Element {i+1}: Error getting info - {elem_error}")
+                    self.logger.info(f"Element {i+1}: {tag_name}, text='{text[:30]}', aria-label='{aria_label}', data-testid='{data_testid}', role='{role}', contenteditable='{contenteditable}'")
+                except Exception as elem_error:
+                    self.logger.warning(f"Element {i+1}: Error getting info - {elem_error}")
                     
-            except Exception as debug_error:
-                self.logger.warning(f"⚠️ Enhanced debug failed: {debug_error}")
-        
-            return None
+        except Exception as debug_error:
+            self.logger.warning(f"⚠️ Enhanced debug failed: {debug_error}")
+    
+        return None
     
     async def find_tweet_text_area(self):
         """Tweet yazma alanını bul - Dialog açıldıktan sonra"""
