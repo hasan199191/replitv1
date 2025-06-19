@@ -7,7 +7,7 @@ import logging
 import random
 import re
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union, Callable
 from email_handler import EmailHandler
 
 class TwitterBrowser:
@@ -37,106 +37,161 @@ class TwitterBrowser:
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
     
-    async def find_first_locator(self, locator_getters, timeout=5000):
-        """Locator bulma fonksiyonu - DÜZELTİLMİŞ"""
-        for i, get_locator in enumerate(locator_getters):
+    async def find_first_locator(self, selectors, timeout=5000):
+        """TAMAMEN YENİDEN YAZILMIŞ locator bulma fonksiyonu"""
+        for i, selector in enumerate(selectors):
             try:
-            # Lambda kontrolünü düzelt
-                if callable(get_locator):
-                    locator = get_locator()
-                else:
-                    locator = get_locator
-            
-                self.logger.info(f"🔍 Trying locator {i+1}/{len(locator_getters)}")
-                first_locator = locator.first()
-                await first_locator.wait_for(state="visible", timeout=timeout)
-                self.logger.info(f"✅ Found element with locator {i+1}")
-                return first_locator
+                self.logger.info(f"🔍 Trying selector {i+1}/{len(selectors)}")
+                
+                # Doğrudan selector'ı kullan
+                locator = selector
+                
+                # Görünür olana kadar bekle
+                await locator.first.wait_for(state="visible", timeout=timeout)
+                self.logger.info(f"✅ Found element with selector {i+1}")
+                return locator.first
             except PlaywrightTimeoutError:
-                self.logger.warning(f"⚠️ Locator {i+1} timeout")
+                self.logger.warning(f"⚠️ Selector {i+1} timeout")
                 continue
             except Exception as e:
-                self.logger.warning(f"⚠️ Locator {i+1} failed: {e}")
+                self.logger.warning(f"⚠️ Selector {i+1} failed: {e}")
                 continue
+        
+        self.logger.error("❌ No element found with any selector")
         raise Exception("Element bulunamadı")
     
     async def open_tweet_compose(self):
-        """Tweet penceresini açma - 2025 MODERN SELECTORS"""
+        """Tweet penceresini açma - TAMAMEN YENİDEN YAZILMIŞ"""
         try:
             self.logger.info("🔍 Opening tweet compose dialog...")
             await asyncio.sleep(2)
-    
-        # MODERN 2025 selectors - lambda'sız
-            compose_btn = await self.find_first_locator([
+            
+            # Doğrudan selectors listesi
+            selectors = [
                 self.page.locator('[data-testid="SideNav_NewTweet_Button"]'),
+                self.page.locator('a[href="/compose/tweet"]'),
+                self.page.locator('div[aria-label="Tweet"]'),
+                self.page.locator('div[aria-label="Post"]'),
                 self.page.locator('a[data-testid="SideNav_NewTweet_Button"]'),
                 self.page.locator('div[data-testid="SideNav_NewTweet_Button"]'),
-                self.page.locator('a[href="/compose/tweet"]'),
-                self.page.locator('[aria-label*="Tweet"]'),
-                self.page.locator('[aria-label*="Post"]'),
-                self.page.locator('div[contenteditable="true"]'),
-                self.page.locator('div[data-testid="tweetTextarea_0"]'),
-                self.page.locator('div[role="textbox"]'),
-            ], timeout=15000)
-
-            await compose_btn.click()
-            await asyncio.sleep(3)
-            self.logger.info("✅ Tweet compose dialog opened")
-            return compose_btn
-
+                self.page.locator('div[role="button"][aria-label*="Tweet"]'),
+                self.page.locator('div[role="button"][aria-label*="Post"]')
+            ]
+            
+            # Önce doğrudan tıklamayı dene
+            for i, selector in enumerate(selectors):
+                try:
+                    self.logger.info(f"🔍 Trying direct click on selector {i+1}/{len(selectors)}")
+                    await selector.first.click(timeout=5000)
+                    self.logger.info("✅ Tweet compose dialog opened with direct click")
+                    await asyncio.sleep(3)
+                    return selector.first
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Direct click failed on selector {i+1}: {e}")
+                    continue
+            
+            # Login kontrolü
+            current_url = self.page.url
+            self.logger.info(f"📍 Current URL: {current_url}")
+            
+            if "login" in current_url or "flow" in current_url:
+                self.logger.warning("⚠️ Redirected to login page, attempting full login...")
+                self.is_logged_in = False
+                
+                if await self.direct_login():
+                    self.logger.info("✅ Login successful, navigating to home...")
+                    await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(5)
+                    
+                    # Tekrar dene
+                    return await self.open_tweet_compose()
+                else:
+                    self.logger.error("❌ Login failed")
+                    return None
+            
+            # Sayfayı yenile ve tekrar dene
+            self.logger.info("🔄 Refreshing page and retrying...")
+            await self.page.reload(wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
+            
+            # Son bir deneme daha
+            for i, selector in enumerate(selectors):
+                try:
+                    self.logger.info(f"🔍 Trying final click on selector {i+1}/{len(selectors)}")
+                    await selector.first.click(timeout=5000)
+                    self.logger.info("✅ Tweet compose dialog opened after refresh")
+                    await asyncio.sleep(3)
+                    return selector.first
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Final click failed on selector {i+1}: {e}")
+                    continue
+            
+            self.logger.error("❌ Could not open tweet compose after all attempts")
+            return None
+            
         except Exception as e:
             self.logger.error(f"❌ Could not open tweet compose: {e}")
-        
+            
             try:
                 self.logger.info("🔍 DEBUG: Checking page state...")
                 current_url = self.page.url
                 self.logger.info(f"📍 Current URL: {current_url}")
-            
-            # Login sayfasındaysak, tekrar login dene
-                if "login" in current_url or "flow" in current_url:
-                    self.logger.warning("⚠️ Redirected to login page, attempting re-login...")
-                    if await self.login():
-                        self.logger.info("✅ Re-login successful, retrying compose...")
-                        return await self.open_tweet_compose()
-                    else:
-                        self.logger.error("❌ Re-login failed")
-                        return None
-            
-                await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-            
-                all_buttons = await self.page.locator('button, a, div[role="button"], div[contenteditable="true"]').all()
-                self.logger.info(f"📊 Found {len(all_buttons)} clickable elements")
-            
-                for i, element in enumerate(all_buttons[:10]):
+                
+                # Sayfa ekran görüntüsü al
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                screenshot_path = f"logs/debug_screenshot_{timestamp}.png"
+                await self.page.screenshot(path=screenshot_path)
+                self.logger.info(f"📸 Debug screenshot saved to {screenshot_path}")
+                
+                # HTML içeriğini logla
+                html_content = await self.page.content()
+                self.logger.info(f"🔍 Page HTML preview: {html_content[:500]}...")
+                
+                # Tüm butonları bul
+                all_buttons = await self.page.locator('button, a[role="button"], div[role="button"]').all()
+                self.logger.info(f"📊 Found {len(all_buttons)} buttons")
+                
+                for i, button in enumerate(all_buttons[:5]):
                     try:
-                        tag_name = await element.evaluate('el => el.tagName')
-                        text = await element.inner_text()
-                        self.logger.info(f"Element {i+1}: {tag_name}, text='{text[:30]}'")
-                    except Exception:
-                        self.logger.warning(f"Element {i+1}: Error getting info")
-                    
-            except Exception:
-                self.logger.warning("⚠️ Enhanced debug failed")
-
+                        text = await button.inner_text()
+                        self.logger.info(f"Button {i+1}: '{text}'")
+                    except:
+                        pass
+                
+            except Exception as debug_error:
+                self.logger.warning(f"⚠️ Debug failed: {debug_error}")
+            
             return None
     
     async def find_tweet_text_area(self):
-        """Tweet yazma alanını bul - LAMBDA'SIZ"""
+        """Tweet yazma alanını bul - YENİDEN YAZILMIŞ"""
         try:
             self.logger.info("🔍 Looking for tweet text area...")
-        
-            text_area = await self.find_first_locator([
+            
+            # Doğrudan selectors
+            selectors = [
                 self.page.locator('div[data-testid="tweetTextarea_0"]'),
                 self.page.locator('div[contenteditable="true"][aria-label*="Tweet"]'),
                 self.page.locator('div[contenteditable="true"][role="textbox"]'),
-                self.page.locator('div[contenteditable="true"]').first(),
+                self.page.locator('div[contenteditable="true"]').first,
                 self.page.locator('div[aria-label="Tweet text"]'),
-                self.page.locator('div[role="textbox"]'),
-            ], timeout=10000)
-        
-            self.logger.info("✅ Found tweet text area")
-            return text_area
-        
+                self.page.locator('div[role="textbox"]')
+            ]
+            
+            # Doğrudan bulmayı dene
+            for i, selector in enumerate(selectors):
+                try:
+                    self.logger.info(f"🔍 Trying to find text area with selector {i+1}/{len(selectors)}")
+                    await selector.wait_for(state="visible", timeout=5000)
+                    self.logger.info(f"✅ Found tweet text area with selector {i+1}")
+                    return selector
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Selector {i+1} failed: {e}")
+                    continue
+            
+            self.logger.error("❌ Could not find tweet text area with any selector")
+            return None
+            
         except Exception as e:
             self.logger.error(f"❌ Could not find tweet text area: {e}")
             return None
@@ -152,50 +207,65 @@ class TwitterBrowser:
             return False
     
     async def send_tweet(self):
-        """Tweet'i gönderme - LAMBDA'SIZ"""
+        """Tweet'i gönderme - YENİDEN YAZILMIŞ"""
         try:
             self.logger.info("🔍 Looking for send button...")
-        
-            send_btn = await self.find_first_locator([
-                self.page.locator('div[data-testid="tweetButtonInline"]'),
+            
+            # Doğrudan selectors
+            selectors = [
                 self.page.locator('div[data-testid="tweetButton"]'),
+                self.page.locator('div[data-testid="tweetButtonInline"]'),
                 self.page.locator('button[data-testid="tweetButton"]'),
                 self.page.locator('button[data-testid="tweetButtonInline"]'),
                 self.page.locator('button:has-text("Post")'),
                 self.page.locator('button:has-text("Tweet")'),
-                self.page.locator('div[role="button"]:has-text("Post")'),
-            ], timeout=10000)
-        
-            await send_btn.click()
-            await asyncio.sleep(5)
-        
-            self.logger.info("✅ Tweet sent!")
-            return True
-        
+                self.page.locator('div[role="button"]:has-text("Post")')
+            ]
+            
+            # Doğrudan tıklamayı dene
+            for i, selector in enumerate(selectors):
+                try:
+                    self.logger.info(f"🔍 Trying to click send button with selector {i+1}/{len(selectors)}")
+                    await selector.click(timeout=5000)
+                    self.logger.info(f"✅ Tweet sent with selector {i+1}")
+                    await asyncio.sleep(5)
+                    return True
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Selector {i+1} failed: {e}")
+                    continue
+            
+            self.logger.error("❌ Could not send tweet with any selector")
+            return False
+            
         except Exception as e:
             self.logger.error(f"❌ Could not send tweet: {e}")
             return False
     
     async def thread_tweet(self, texts: List[str]):
-        """Thread atma - LAMBDA'SIZ"""
+        """Thread atma - YENİDEN YAZILMIŞ"""
         try:
             self.logger.info(f"🧵 Creating thread with {len(texts)} tweets")
-        
-            compose_area = await self.open_tweet_compose()
-            if not compose_area:
-                return False
-        
+            
+            # Tweet compose penceresini aç
+            await self.page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
+            
+            # İlk tweet'i yaz
             text_area = await self.find_tweet_text_area()
             if not text_area:
-                text_area = compose_area
-        
+                self.logger.error("❌ Could not find text area for first tweet")
+                return False
+            
             await self.fill_tweet(text_area, texts[0])
-        
+            self.logger.info("✅ First tweet filled")
+            
+            # Diğer tweetleri ekle
             for i, text in enumerate(texts[1:], start=1):
                 self.logger.info(f"➕ Adding tweet {i+1}/{len(texts)}")
-            
+                
                 try:
-                    add_btn = await self.find_first_locator([
+                    # Add button selectors
+                    add_selectors = [
                         self.page.locator('div[data-testid="addButton"]'),
                         self.page.locator('button[data-testid="addButton"]'),
                         self.page.locator('div[data-testid="addTweetButton"]'),
@@ -204,27 +274,60 @@ class TwitterBrowser:
                         self.page.locator('div[aria-label="Add another Tweet"]'),
                         self.page.locator('button[aria-label="Add post"]'),
                         self.page.locator('button:has-text("+")'),
-                        self.page.locator('div:has-text("+")'),
-                    ], timeout=5000)
-                
-                    await add_btn.click()
-                    await asyncio.sleep(3)
-                
-                    new_text_area = await self.find_first_locator([
+                        self.page.locator('div:has-text("+")').filter(has=self.page.locator('[role="button"]'))
+                    ]
+                    
+                    # Doğrudan tıklamayı dene
+                    add_clicked = False
+                    for j, selector in enumerate(add_selectors):
+                        try:
+                            self.logger.info(f"🔍 Trying to click add button with selector {j+1}/{len(add_selectors)}")
+                            await selector.click(timeout=5000)
+                            self.logger.info(f"✅ Add button clicked with selector {j+1}")
+                            add_clicked = True
+                            await asyncio.sleep(3)
+                            break
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Add button selector {j+1} failed: {e}")
+                            continue
+                    
+                    if not add_clicked:
+                        self.logger.warning(f"⚠️ Could not add tweet {i+1}, posting what we have")
+                        break
+                    
+                    # Yeni tweet alanını bul
+                    new_text_area_selectors = [
                         self.page.locator(f'div[data-testid="tweetTextarea_{i}"]'),
-                        self.page.locator('div[contenteditable="true"]').last(),
-                        self.page.locator('div[role="textbox"]').last(),
-                        self.page.locator('div[aria-label="Tweet text"]').last(),
-                    ], timeout=5000)
-                
+                        self.page.locator('div[contenteditable="true"]').nth(i),
+                        self.page.locator('div[role="textbox"]').nth(i),
+                        self.page.locator('div[contenteditable="true"]').last
+                    ]
+                    
+                    new_text_area = None
+                    for j, selector in enumerate(new_text_area_selectors):
+                        try:
+                            self.logger.info(f"🔍 Trying to find text area {i+1} with selector {j+1}/{len(new_text_area_selectors)}")
+                            await selector.wait_for(state="visible", timeout=5000)
+                            self.logger.info(f"✅ Found text area {i+1} with selector {j+1}")
+                            new_text_area = selector
+                            break
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Text area selector {j+1} failed: {e}")
+                            continue
+                    
+                    if not new_text_area:
+                        self.logger.warning(f"⚠️ Could not find text area for tweet {i+1}, posting what we have")
+                        break
+                    
                     await self.fill_tweet(new_text_area, text)
-                
+                    
                 except Exception as e:
                     self.logger.warning(f"⚠️ Could not add tweet {i+1}: {e}")
                     break
-        
+            
+            # Gönder
             return await self.send_tweet()
-        
+            
         except Exception as e:
             self.logger.error(f"❌ Thread creation failed: {e}")
             return False
@@ -408,7 +511,7 @@ class TwitterBrowser:
                     return True
             
             try:
-                tweet_area = await self.page.locator('div[contenteditable="true"]').first().count()
+                tweet_area = await self.page.locator('div[contenteditable="true"]').count()
                 if tweet_area > 0:
                     self.logger.info("✅ Tweet area found - logged in")
                     self.is_logged_in = True
@@ -468,7 +571,7 @@ class TwitterBrowser:
         return await self.full_login_check()
     
     async def direct_login(self):
-        """DİREKT login süreci"""
+        """DİREKT login süreci - YENİDEN YAZILMIŞ"""
         try:
             self.logger.info("⚡ Starting DIRECT login...")
             self.login_attempts += 1
@@ -483,12 +586,29 @@ class TwitterBrowser:
             username = os.environ.get('TWITTER_USERNAME') or os.environ.get('EMAIL_USER')
             self.logger.info(f"⚡ Entering username: {username}")
             
+            # Username field
             try:
-                username_field = await self.find_first_locator([
-                    lambda: self.page.locator('input[autocomplete="username"]'),
-                    lambda: self.page.locator('input[name="text"]'),
-                    lambda: self.page.locator('input[type="text"]'),
-                ], timeout=10000)
+                username_selectors = [
+                    self.page.locator('input[autocomplete="username"]'),
+                    self.page.locator('input[name="text"]'),
+                    self.page.locator('input[type="text"]')
+                ]
+                
+                username_field = None
+                for i, selector in enumerate(username_selectors):
+                    try:
+                        self.logger.info(f"🔍 Trying username field selector {i+1}/{len(username_selectors)}")
+                        await selector.wait_for(state="visible", timeout=5000)
+                        self.logger.info(f"✅ Found username field with selector {i+1}")
+                        username_field = selector
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Username selector {i+1} failed: {e}")
+                        continue
+                
+                if not username_field:
+                    self.logger.error("❌ Could not find username field")
+                    return False
                 
                 await username_field.fill(username)
                 await self.page.keyboard.press('Enter')
@@ -503,11 +623,28 @@ class TwitterBrowser:
             password = os.environ.get('TWITTER_PASSWORD')
             self.logger.info("⚡ Looking for password field...")
             
+            # Password field
             try:
-                password_field = await self.find_first_locator([
-                    lambda: self.page.locator('input[type="password"]'),
-                    lambda: self.page.locator('input[name="password"]'),
-                ], timeout=10000)
+                password_selectors = [
+                    self.page.locator('input[type="password"]'),
+                    self.page.locator('input[name="password"]')
+                ]
+                
+                password_field = None
+                for i, selector in enumerate(password_selectors):
+                    try:
+                        self.logger.info(f"🔍 Trying password field selector {i+1}/{len(password_selectors)}")
+                        await selector.wait_for(state="visible", timeout=5000)
+                        self.logger.info(f"✅ Found password field with selector {i+1}")
+                        password_field = selector
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Password selector {i+1} failed: {e}")
+                        continue
+                
+                if not password_field:
+                    self.logger.error("❌ Could not find password field")
+                    return False
                 
                 await password_field.fill(password)
                 await self.page.keyboard.press('Enter')
@@ -619,7 +756,7 @@ class TwitterBrowser:
         return await self.direct_login()
     
     async def post_thread(self, content):
-        """THREAD OLARAK tweet gönder"""
+        """THREAD OLARAK tweet gönder - YENİDEN YAZILMIŞ"""
         try:
             self.logger.info("🔍 Smart login check before posting...")
             if not await self.lightweight_login_check():
@@ -650,20 +787,11 @@ class TwitterBrowser:
 
             self.logger.info(f"🧵 Sending thread with {len(tweets)} tweets")
 
-            current_url = self.page.url
-            self.logger.info(f"📍 Current URL: {current_url}")
+            # Doğrudan compose sayfasına git
+            self.logger.info("🔍 Navigating directly to compose page...")
+            await self.page.goto("https://x.com/compose/tweet", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
             
-            if "login" in current_url or "flow" in current_url:
-                self.logger.info("🏠 Going to home page...")
-                await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(3)
-            elif "x.com" not in current_url and "twitter.com" not in current_url:
-                self.logger.info("🏠 Going to home page...")
-                await self.page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(3)
-            else:
-                self.logger.info("✅ Already on Twitter, staying on current page")
-
             return await self.thread_tweet(tweets)
 
         except Exception as e:
@@ -800,14 +928,31 @@ class TwitterBrowser:
                         return None
 
             try:
-                first_tweet = await self.find_first_locator([
-                    lambda: self.page.get_by_role("article"),
-                    lambda: self.page.locator('article[data-testid="tweet"]'),
-                    lambda: self.page.locator('[data-testid="tweet"]'),
-                    lambda: self.page.locator('article[role="article"]')
-                ], timeout=10000)
+                # Doğrudan selectors
+                selectors = [
+                    self.page.get_by_role("article"),
+                    self.page.locator('article[data-testid="tweet"]'),
+                    self.page.locator('[data-testid="tweet"]'),
+                    self.page.locator('article[role="article"]')
+                ]
                 
-                link = await first_tweet.query_selector('a[href*="/status/"]')
+                first_tweet = None
+                for i, selector in enumerate(selectors):
+                    try:
+                        self.logger.info(f"🔍 Trying to find tweet with selector {i+1}/{len(selectors)}")
+                        await selector.first.wait_for(state="visible", timeout=5000)
+                        self.logger.info(f"✅ Found tweet with selector {i+1}")
+                        first_tweet = selector.first
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Selector {i+1} failed: {e}")
+                        continue
+                
+                if not first_tweet:
+                    self.logger.error("❌ Could not find any tweet")
+                    return None
+                
+                link = await first_tweet.locator('a[href*="/status/"]').first()
                 if link:
                     href = await link.get_attribute('href')
                     if href and '/status/' in href:
@@ -846,26 +991,58 @@ class TwitterBrowser:
             await self.page.goto(tweet_url, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(3)
 
+            # Reply button
             try:
-                reply_btn = await self.find_first_locator([
-                    lambda: self.page.get_by_role("button", name=re.compile(r"yorum yap|reply", re.I)),
-                    lambda: self.page.locator('div[data-testid^="reply"]'),
-                    lambda: self.page.locator('div[data-testid="reply"]'),
-                ], timeout=10000)
+                reply_selectors = [
+                    self.page.locator('div[data-testid="reply"]'),
+                    self.page.locator('div[aria-label*="Reply"]'),
+                    self.page.locator('div[aria-label*="Yanıtla"]')
+                ]
                 
-                await reply_btn.click()
-                await asyncio.sleep(2)
+                reply_clicked = False
+                for i, selector in enumerate(reply_selectors):
+                    try:
+                        self.logger.info(f"🔍 Trying to click reply button with selector {i+1}/{len(reply_selectors)}")
+                        await selector.click(timeout=5000)
+                        self.logger.info(f"✅ Reply button clicked with selector {i+1}")
+                        reply_clicked = True
+                        await asyncio.sleep(2)
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Reply button selector {i+1} failed: {e}")
+                        continue
+                
+                if not reply_clicked:
+                    self.logger.error("❌ Could not click reply button")
+                    return False
             except Exception as e:
                 self.logger.error(f"❌ Reply button not found: {e}")
                 return False
 
+            # Reply text area
             try:
-                reply_box = await self.find_first_locator([
-                    lambda: self.page.get_by_role("textbox", name=re.compile(r"tweet'e yanıtla|reply", re.I)),
-                    lambda: self.page.locator('div[contenteditable="true"][aria-label*="Reply"]'),
-                    lambda: self.page.locator('div[data-testid="tweetTextarea_0"]'),
-                    lambda: self.page.locator('div[contenteditable="true"]'),
-                ], timeout=10000)
+                reply_box_selectors = [
+                    self.page.locator('div[data-testid="tweetTextarea_0"]'),
+                    self.page.locator('div[contenteditable="true"][aria-label*="Reply"]'),
+                    self.page.locator('div[contenteditable="true"]'),
+                    self.page.locator('div[role="textbox"]')
+                ]
+                
+                reply_box = None
+                for i, selector in enumerate(reply_box_selectors):
+                    try:
+                        self.logger.info(f"🔍 Trying to find reply box with selector {i+1}/{len(reply_box_selectors)}")
+                        await selector.wait_for(state="visible", timeout=5000)
+                        self.logger.info(f"✅ Found reply box with selector {i+1}")
+                        reply_box = selector
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Reply box selector {i+1} failed: {e}")
+                        continue
+                
+                if not reply_box:
+                    self.logger.error("❌ Could not find reply box")
+                    return False
                 
                 await reply_box.fill(reply_content)
                 await asyncio.sleep(2)
@@ -873,15 +1050,31 @@ class TwitterBrowser:
                 self.logger.error(f"❌ Reply area not found: {e}")
                 return False
 
+            # Send button
             try:
-                send_btn = await self.find_first_locator([
-                    lambda: self.page.get_by_role("button", name=re.compile(r"tweetle|reply", re.I)),
-                    lambda: self.page.locator('div[data-testid="tweetButton"]'),
-                    lambda: self.page.locator('button[data-testid="tweetButton"]'),
-                ], timeout=10000)
+                send_selectors = [
+                    self.page.locator('div[data-testid="tweetButton"]'),
+                    self.page.locator('button[data-testid="tweetButton"]'),
+                    self.page.locator('div[role="button"]:has-text("Reply")'),
+                    self.page.locator('button:has-text("Reply")')
+                ]
                 
-                await send_btn.click()
-                await asyncio.sleep(5)
+                send_clicked = False
+                for i, selector in enumerate(send_selectors):
+                    try:
+                        self.logger.info(f"🔍 Trying to click send button with selector {i+1}/{len(send_selectors)}")
+                        await selector.click(timeout=5000)
+                        self.logger.info(f"✅ Send button clicked with selector {i+1}")
+                        send_clicked = True
+                        await asyncio.sleep(5)
+                        break
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Send button selector {i+1} failed: {e}")
+                        continue
+                
+                if not send_clicked:
+                    self.logger.error("❌ Could not click send button")
+                    return False
                 
                 self.logger.info("✅ Reply posted!")
                 return True
