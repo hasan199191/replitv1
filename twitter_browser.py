@@ -26,7 +26,7 @@ class TwitterBrowser:
         self.email_handler = EmailHandler()
         self.setup_logging()
         
-        # Modern Playwright Selectors - Semantik Öncelikli
+        # GÜNCEL Twitter Selectors - 2025 versiyonu
         self.selectors = {
             'login': {
                 'username_semantic': 'input[autocomplete="username"]',
@@ -36,31 +36,36 @@ class TwitterBrowser:
                 'login_button': ['div[data-testid="LoginForm_Login_Button"]', 'button:has-text("Log in")', 'button:has-text("Next")']
             },
             'compose': {
-                'tweet_button_semantic': 'a[data-testid="SideNav_NewTweet_Button"]',
+                # GÜNCEL tweet button selectors - 2025
+                'tweet_button_semantic': 'div[aria-label="Tweet text"]',
                 'tweet_button_fallback': [
-                    'div[data-testid="SideNav_NewTweet_Button"]',
-                    'button[data-testid="SideNav_NewTweet_Button"]',
-                    'a[aria-label="Post"]',
-                    'button[aria-label="Post"]'
-                ],
-                'compose_area_semantic': 'div[data-testid="tweetTextarea_0"]',
-                'compose_area_fallback': [
+                    'div[data-testid="tweetTextarea_0"]',
                     'div[contenteditable="true"][aria-label*="What"]',
                     'div[contenteditable="true"][role="textbox"]',
-                    'div[contenteditable="true"]'
+                    'div[contenteditable="true"]',
+                    'div[aria-label="Post text"]',
+                    'div[role="textbox"]'
                 ],
-                'post_button_semantic': 'div[data-testid="tweetButton"]',
+                # Post butonu için güncel selectors
+                'post_button_semantic': 'div[data-testid="tweetButtonInline"]',
                 'post_button_fallback': [
+                    'div[data-testid="tweetButton"]',
                     'button[data-testid="tweetButton"]',
-                    'button[role="button"][aria-label*="Post"]'
+                    'button[data-testid="tweetButtonInline"]',
+                    'button[role="button"]:has-text("Post")',
+                    'div[role="button"]:has-text("Post")',
+                    'button:has-text("Tweet")',
+                    'div:has-text("Tweet")'
                 ]
             },
             'thread': {
-                'add_button_semantic': 'div[aria-label="Add another post"]',
+                'add_button_semantic': 'div[data-testid="addTweetButton"]',
                 'add_button_fallback': [
+                    'div[aria-label="Add another post"]',
                     'div[aria-label="Add another Tweet"]',
                     'button[aria-label="Add post"]',
-                    'div[data-testid="addButton"]'
+                    'div[data-testid="addButton"]',
+                    'button:has-text("+")'
                 ]
             },
             'reply': {
@@ -89,23 +94,26 @@ class TwitterBrowser:
             semantic_key = f"{element_type}_semantic"
             if semantic_key in selectors:
                 try:
+                    self.logger.info(f"🔍 Trying semantic selector: {selectors[semantic_key]}")
                     element = await self.page.wait_for_selector(selectors[semantic_key], timeout=timeout)
                     if element and await element.is_visible():
                         self.logger.info(f"✅ Found {element_type} with semantic selector")
                         return element
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Semantic selector failed: {e}")
             
             # Fallback selector'ları dene
             fallback_key = f"{element_type}_fallback"
             if fallback_key in selectors:
                 for selector in selectors[fallback_key]:
                     try:
+                        self.logger.info(f"🔍 Trying fallback selector: {selector}")
                         element = await self.page.wait_for_selector(selector, timeout=timeout)
                         if element and await element.is_visible():
                             self.logger.info(f"✅ Found {element_type} with fallback: {selector}")
                             return element
-                    except:
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Fallback selector {selector} failed: {e}")
                         continue
             
             self.logger.error(f"❌ Could not find {element_type} in {selector_group}")
@@ -113,6 +121,46 @@ class TwitterBrowser:
             
         except Exception as e:
             self.logger.error(f"❌ Error finding {element_type}: {e}")
+            return None
+    
+    async def find_tweet_compose_area(self):
+        """Tweet yazma alanını bul - ÖZELLEŞTİRİLMİŞ"""
+        try:
+            self.logger.info("🔍 Looking for tweet compose area...")
+            
+            # Güncel Twitter compose area selectors
+            compose_selectors = [
+                'div[aria-label="Tweet text"]',
+                'div[data-testid="tweetTextarea_0"]',
+                'div[contenteditable="true"][aria-label*="What"]',
+                'div[contenteditable="true"][role="textbox"]',
+                'div[contenteditable="true"]',
+                'div[aria-label="Post text"]',
+                'div[role="textbox"]'
+            ]
+            
+            for selector in compose_selectors:
+                try:
+                    self.logger.info(f"🔍 Trying compose selector: {selector}")
+                    element = await self.page.wait_for_selector(selector, timeout=5000)
+                    if element:
+                        is_visible = await element.is_visible()
+                        is_enabled = await element.is_enabled()
+                        
+                        if is_visible and is_enabled:
+                            self.logger.info(f"✅ Found compose area: {selector}")
+                            return element
+                        else:
+                            self.logger.warning(f"⚠️ Element found but not visible/enabled: {selector}")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Compose selector {selector} failed: {e}")
+                    continue
+            
+            self.logger.error("❌ Could not find tweet compose area")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error finding compose area: {e}")
             return None
     
     def smart_split_content(self, content: str, max_length: int = 270) -> List[str]:
@@ -309,11 +357,11 @@ class TwitterBrowser:
                     self.last_login_check = current_time
                     return True
                 
-                # Tweet butonu var mı hızlıca kontrol et
+                # Tweet alanı var mı hızlıca kontrol et
                 try:
-                    tweet_button = await self.page.query_selector('a[data-testid="SideNav_NewTweet_Button"]')
-                    if tweet_button:
-                        self.logger.info("✅ Tweet button found - logged in")
+                    tweet_area = await self.page.query_selector('div[aria-label="Tweet text"]')
+                    if tweet_area:
+                        self.logger.info("✅ Tweet area found - logged in")
                         self.is_logged_in = True
                         self.last_login_check = current_time
                         return True
@@ -536,7 +584,7 @@ class TwitterBrowser:
         return await self.direct_login()
     
     async def post_thread(self, content):
-        """THREAD OLARAK tweet gönder - AKILLI LOGIN KONTROLÜ"""
+        """THREAD OLARAK tweet gönder - YENİ YAKLAŞIM"""
         try:
             # SADECE GEREKTİĞİNDE login kontrolü yap
             self.logger.info("🔍 Smart login check before posting...")
@@ -585,20 +633,12 @@ class TwitterBrowser:
             else:
                 self.logger.info("✅ Already on Twitter, staying on current page")
 
-            # Tweet butonu bul - Modern Approach
-            tweet_button = await self.find_element_with_fallback('compose', 'tweet_button', timeout=10000)
-            if not tweet_button:
-                self.logger.error("❌ Could not find tweet button")
-                return False
-
-            # Tweet butonuna tıkla
-            await tweet_button.click()
-            await asyncio.sleep(3)
-
-            # Compose area bul - Modern Approach
-            compose_area = await self.find_element_with_fallback('compose', 'compose_area', timeout=10000)
+            # Tweet compose area'yı bul - YENİ YAKLAŞIM
+            self.logger.info("🔍 Looking for tweet compose area...")
+            compose_area = await self.find_tweet_compose_area()
+            
             if not compose_area:
-                self.logger.error("❌ Could not find compose area")
+                self.logger.error("❌ Could not find tweet compose area")
                 return False
 
             # İlk tweet'i yaz
